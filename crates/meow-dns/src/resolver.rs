@@ -403,7 +403,7 @@ impl Resolver {
         use_hosts: bool,
         policy: Option<NameserverPolicy>,
         fallback_filter: Option<FallbackFilter>,
-        proxy_registry: &HashMap<String, Arc<dyn meow_common::Proxy>>,
+        proxy_registry: &HashMap<SmolStr, Arc<dyn meow_common::Proxy>>,
     ) -> Result<Self, BootstrapError> {
         // ── Validate proxy references up front so misconfig fails loud.
         // `default_ns` entries are forbidden from carrying #PROXY — they
@@ -431,7 +431,7 @@ impl Resolver {
                     proxy: p.clone(),
                 });
             }
-            if !proxy_registry.contains_key(p) {
+            if !proxy_registry.contains_key(p.as_str()) {
                 return Err(BootstrapError::UnknownProxy {
                     nameserver: entry.url.to_string(),
                     proxy: p.clone(),
@@ -449,7 +449,7 @@ impl Resolver {
                     .map(|e| {
                         e.proxy
                             .as_ref()
-                            .and_then(|p| proxy_registry.get(p).cloned())
+                            .and_then(|p| proxy_registry.get(p.as_str()).cloned())
                     })
                     .collect()
             };

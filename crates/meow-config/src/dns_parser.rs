@@ -19,7 +19,7 @@ pub async fn parse_dns(
     raw: &RawConfig,
     mmdb_path: Option<&std::path::Path>,
     cache_dir: Option<&std::path::Path>,
-    proxy_registry: &HashMap<String, Arc<dyn meow_common::Proxy>>,
+    proxy_registry: &HashMap<smol_str::SmolStr, Arc<dyn meow_common::Proxy>>,
 ) -> Result<DnsConfig, anyhow::Error> {
     let dns = match &raw.dns {
         Some(dns) if dns.enable.unwrap_or(false) => dns,

@@ -199,7 +199,7 @@ fn tls_connector() -> tokio_rustls::TlsConnector {
 /// load during proxy construction).
 pub fn first_named_proxy(
     raw_proxies: Option<&[std::collections::HashMap<String, serde_yaml::Value>]>,
-    proxies: &std::collections::HashMap<String, Arc<dyn Proxy>>,
+    proxies: &std::collections::HashMap<smol_str::SmolStr, Arc<dyn Proxy>>,
 ) -> Option<Arc<dyn Proxy>> {
     let entry = raw_proxies?.first()?;
     let name = entry.get("name")?.as_str()?;

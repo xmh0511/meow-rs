@@ -13,6 +13,7 @@ use meow_proxy::{
 };
 #[cfg(feature = "vless")]
 use meow_proxy::{TransportChain, VlessAdapter, VlessFlow};
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -925,7 +926,7 @@ fn serialize_plugin_opts(opts: &serde_yaml::Value) -> Option<String> {
 
 pub fn parse_proxy_group(
     config: &crate::raw::RawProxyGroup,
-    existing_proxies: &HashMap<String, Arc<dyn Proxy>>,
+    existing_proxies: &HashMap<SmolStr, Arc<dyn Proxy>>,
     providers: &HashMap<String, Arc<crate::proxy_provider::ProxyProvider>>,
 ) -> std::result::Result<Arc<dyn Proxy>, String> {
     parse_proxy_group_inner(config, existing_proxies, true, providers, None)
@@ -935,7 +936,7 @@ pub fn parse_proxy_group(
 /// into any `type: select` group it builds, so user picks survive restart.
 pub fn parse_proxy_group_with_store(
     config: &crate::raw::RawProxyGroup,
-    existing_proxies: &HashMap<String, Arc<dyn Proxy>>,
+    existing_proxies: &HashMap<SmolStr, Arc<dyn Proxy>>,
     providers: &HashMap<String, Arc<crate::proxy_provider::ProxyProvider>>,
     store: Option<&Arc<meow_proxy::SelectorStore>>,
 ) -> std::result::Result<Arc<dyn Proxy>, String> {
@@ -948,7 +949,7 @@ pub fn parse_proxy_group_with_store(
 /// members *did* resolve — matching upstream mihomo's warn-not-fail contract.
 pub fn parse_proxy_group_lenient(
     config: &crate::raw::RawProxyGroup,
-    existing_proxies: &HashMap<String, Arc<dyn Proxy>>,
+    existing_proxies: &HashMap<SmolStr, Arc<dyn Proxy>>,
     providers: &HashMap<String, Arc<crate::proxy_provider::ProxyProvider>>,
 ) -> std::result::Result<Arc<dyn Proxy>, String> {
     parse_proxy_group_inner(config, existing_proxies, false, providers, None)
@@ -958,7 +959,7 @@ pub fn parse_proxy_group_lenient(
 /// [`parse_proxy_group_with_store`].
 pub fn parse_proxy_group_lenient_with_store(
     config: &crate::raw::RawProxyGroup,
-    existing_proxies: &HashMap<String, Arc<dyn Proxy>>,
+    existing_proxies: &HashMap<SmolStr, Arc<dyn Proxy>>,
     providers: &HashMap<String, Arc<crate::proxy_provider::ProxyProvider>>,
     store: Option<&Arc<meow_proxy::SelectorStore>>,
 ) -> std::result::Result<Arc<dyn Proxy>, String> {
@@ -967,7 +968,7 @@ pub fn parse_proxy_group_lenient_with_store(
 
 fn parse_proxy_group_inner(
     config: &crate::raw::RawProxyGroup,
-    existing_proxies: &HashMap<String, Arc<dyn Proxy>>,
+    existing_proxies: &HashMap<SmolStr, Arc<dyn Proxy>>,
     strict: bool,
     providers: &HashMap<String, Arc<crate::proxy_provider::ProxyProvider>>,
     selector_store: Option<&Arc<meow_proxy::SelectorStore>>,
@@ -1397,7 +1398,7 @@ tls: true
     fn relay_single_proxy_hard_errors_at_parse() {
         let existing = {
             let mut m = std::collections::HashMap::new();
-            m.insert("DIRECT".to_string(), make_direct_proxy("DIRECT"));
+            m.insert(SmolStr::new_static("DIRECT"), make_direct_proxy("DIRECT"));
             m
         };
         let config = relay_config("r", vec!["DIRECT".to_string()]);
@@ -1437,8 +1438,8 @@ tls: true
     fn relay_url_field_warns_not_errors() {
         let existing = {
             let mut m = std::collections::HashMap::new();
-            m.insert("DIRECT".to_string(), make_direct_proxy("DIRECT"));
-            m.insert("REJECT".to_string(), make_direct_proxy("REJECT"));
+            m.insert(SmolStr::new_static("DIRECT"), make_direct_proxy("DIRECT"));
+            m.insert(SmolStr::new_static("REJECT"), make_direct_proxy("REJECT"));
             m
         };
         let config = crate::raw::RawProxyGroup {
@@ -1458,8 +1459,8 @@ tls: true
     fn relay_interval_field_warns_not_errors() {
         let existing = {
             let mut m = std::collections::HashMap::new();
-            m.insert("DIRECT".to_string(), make_direct_proxy("DIRECT"));
-            m.insert("REJECT".to_string(), make_direct_proxy("REJECT"));
+            m.insert(SmolStr::new_static("DIRECT"), make_direct_proxy("DIRECT"));
+            m.insert(SmolStr::new_static("REJECT"), make_direct_proxy("REJECT"));
             m
         };
         let config = crate::raw::RawProxyGroup {
@@ -1478,8 +1479,8 @@ tls: true
     fn relay_url_and_interval_warn_not_errors() {
         let existing = {
             let mut m = std::collections::HashMap::new();
-            m.insert("DIRECT".to_string(), make_direct_proxy("DIRECT"));
-            m.insert("REJECT".to_string(), make_direct_proxy("REJECT"));
+            m.insert(SmolStr::new_static("DIRECT"), make_direct_proxy("DIRECT"));
+            m.insert(SmolStr::new_static("REJECT"), make_direct_proxy("REJECT"));
             m
         };
         let config = crate::raw::RawProxyGroup {

@@ -28,7 +28,7 @@ use tracing::{info, warn};
 pub struct Config {
     pub general: GeneralConfig,
     pub dns: DnsConfig,
-    pub proxies: HashMap<String, Arc<dyn Proxy>>,
+    pub proxies: HashMap<SmolStr, Arc<dyn Proxy>>,
     pub proxy_providers: HashMap<String, Arc<ProxyProvider>>,
     pub rules: Vec<Box<dyn Rule>>,
     pub rule_providers: HashMap<String, Arc<rule_provider::RuleProvider>>,
@@ -168,7 +168,7 @@ pub fn save_raw_config(path: &str, raw: &raw::RawConfig) -> Result<(), anyhow::E
 }
 
 /// The result of rebuilding proxies and rules from a RawConfig.
-pub type RebuildResult = (HashMap<String, Arc<dyn Proxy>>, Vec<Box<dyn Rule>>);
+pub type RebuildResult = (HashMap<SmolStr, Arc<dyn Proxy>>, Vec<Box<dyn Rule>>);
 
 /// Rebuild proxies and rules from a RawConfig (used for runtime updates).
 ///
@@ -206,7 +206,7 @@ fn rebuild_from_raw_impl(
     selector_store: Option<&Arc<meow_proxy::SelectorStore>>,
     shared_ctx: Option<&meow_rules::ParserContext>,
 ) -> Result<RebuildResult, anyhow::Error> {
-    let mut proxies: HashMap<String, Arc<dyn Proxy>> = HashMap::new();
+    let mut proxies: HashMap<SmolStr, Arc<dyn Proxy>> = HashMap::new();
     // Built-in proxies
     let mut direct = meow_proxy::DirectAdapter::new();
     if let Some(mark) = raw.routing_mark {
@@ -216,17 +216,17 @@ fn rebuild_from_raw_impl(
         direct = direct.with_resolver(resolver);
     }
     proxies.insert(
-        "DIRECT".to_string(),
+        SmolStr::new_static("DIRECT"),
         Arc::new(proxy_parser::WrappedProxy::new(Box::new(direct))),
     );
     proxies.insert(
-        "REJECT".to_string(),
+        SmolStr::new_static("REJECT"),
         Arc::new(proxy_parser::WrappedProxy::new(Box::new(
             meow_proxy::RejectAdapter::new(false),
         ))),
     );
     proxies.insert(
-        "REJECT-DROP".to_string(),
+        SmolStr::new_static("REJECT-DROP"),
         Arc::new(proxy_parser::WrappedProxy::new(Box::new(
             meow_proxy::RejectAdapter::new(true),
         ))),
@@ -240,10 +240,11 @@ fn rebuild_from_raw_impl(
                 // into the adapter) but `DirectAdapter::name()` is hardcoded
                 // to "DIRECT" and would overwrite the built-in, hiding any
                 // user-named direct proxy (e.g. `name: "直连"`) from groups.
-                let key = raw_proxy
+                let key: SmolStr = raw_proxy
                     .get("name")
                     .and_then(|v| v.as_str())
-                    .map_or_else(|| proxy.name().to_string(), str::to_string);
+                    .unwrap_or_else(|| proxy.name())
+                    .into();
                 proxies.insert(key, proxy);
             }
             Err(e) => warn!("Failed to parse proxy: {}", e),
@@ -266,7 +267,7 @@ fn rebuild_from_raw_impl(
                 selector_store,
             ) {
                 Ok(group) => {
-                    let name = group.name().to_string();
+                    let name = SmolStr::from(group.name());
                     proxies.insert(name, group);
                 }
                 Err(_) => {
@@ -287,7 +288,7 @@ fn rebuild_from_raw_impl(
                     selector_store,
                 ) {
                     Ok(group) => {
-                        let name = group.name().to_string();
+                        let name = SmolStr::from(group.name());
                         proxies.insert(name, group);
                     }
                     Err(e) => warn!("Failed to parse proxy group '{}': {}", raw_group.name, e),

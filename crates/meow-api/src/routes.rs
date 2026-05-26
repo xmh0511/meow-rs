@@ -292,7 +292,7 @@ async fn get_proxies(State(state): State<Arc<AppState>>) -> Json<ProxiesResponse
     let proxies = state.tunnel.proxies();
     let mut result = std::collections::HashMap::new();
     for (name, proxy) in &proxies {
-        result.insert(name.clone(), ProxyInfo::from_proxy(proxy));
+        result.insert(name.to_string(), ProxyInfo::from_proxy(proxy));
     }
     Json(ProxiesResponse { proxies: result })
 }
@@ -302,7 +302,7 @@ async fn get_proxy(
     Path(name): Path<String>,
 ) -> Result<Json<ProxyInfo>, StatusCode> {
     let proxies = state.tunnel.proxies();
-    let proxy = proxies.get(&name).ok_or(StatusCode::NOT_FOUND)?;
+    let proxy = proxies.get(name.as_str()).ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(ProxyInfo::from_proxy(proxy)))
 }
 
@@ -318,7 +318,7 @@ async fn update_proxy(
 ) -> StatusCode {
     use meow_proxy::SelectorGroup;
     let proxies = state.tunnel.proxies();
-    if let Some(proxy) = proxies.get(&group_name) {
+    if let Some(proxy) = proxies.get(group_name.as_str()) {
         if let Some(selector) = proxy
             .as_any()
             .and_then(|a| a.downcast_ref::<SelectorGroup>())
@@ -749,7 +749,7 @@ async fn get_proxy_groups(State(state): State<Arc<AppState>>) -> Json<Vec<ProxyG
         .map(|g| {
             use meow_proxy::SelectorGroup;
             let now = tunnel_proxies
-                .get(&g.name)
+                .get(g.name.as_str())
                 .and_then(|p| p.as_any())
                 .and_then(|a| a.downcast_ref::<SelectorGroup>())
                 .and_then(meow_proxy::SelectorGroup::selected_proxy)
@@ -871,7 +871,7 @@ async fn select_proxy_in_group(
 ) -> StatusCode {
     use meow_proxy::SelectorGroup;
     let proxies = state.tunnel.proxies();
-    if let Some(proxy) = proxies.get(&group_name) {
+    if let Some(proxy) = proxies.get(group_name.as_str()) {
         if let Some(selector) = proxy
             .as_any()
             .and_then(|a| a.downcast_ref::<SelectorGroup>())
@@ -1053,7 +1053,7 @@ async fn get_proxy_delay(
 
     let proxies = state.tunnel.proxies();
     // upstream: hub/route/proxies.go::getProxyDelay — findProxyByName middleware
-    let Some(proxy) = proxies.get(&name).cloned() else {
+    let Some(proxy) = proxies.get(name.as_str()).cloned() else {
         return msg_err(StatusCode::NOT_FOUND, "resource not found");
     };
     drop(proxies);
@@ -1085,7 +1085,7 @@ async fn get_group_delay(
     let expected = params.expected.clone();
 
     let proxies = state.tunnel.proxies();
-    let Some(group) = proxies.get(&name).cloned() else {
+    let Some(group) = proxies.get(name.as_str()).cloned() else {
         return msg_err(StatusCode::NOT_FOUND, "resource not found");
     };
     // upstream: findProxyByName rejects non-groups with 404 for this route.
@@ -1097,7 +1097,7 @@ async fn get_group_delay(
     // proxies map so the spawned tasks hold their own Arc clones.
     let members: Vec<(String, Arc<dyn meow_common::Proxy>)> = member_names
         .into_iter()
-        .filter_map(|n| proxies.get(&n).cloned().map(|p| (n, p)))
+        .filter_map(|n| proxies.get(n.as_str()).cloned().map(|p| (n, p)))
         .collect();
     drop(proxies);
 
@@ -1303,7 +1303,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     let proxy_delay = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
     for (name, proxy) in state.tunnel.proxies() {
         let labels = vec![
-            ("proxy_name".to_string(), name),
+            ("proxy_name".to_string(), name.to_string()),
             ("adapter_type".to_string(), proxy.adapter_type().to_string()),
         ];
         proxy_alive

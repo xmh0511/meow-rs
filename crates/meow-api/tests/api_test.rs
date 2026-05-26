@@ -1500,7 +1500,7 @@ mod delay_support {
         use super::*;
         let mut proxies = std::collections::HashMap::new();
         for (name, proxy) in named {
-            proxies.insert(name.to_string(), proxy);
+            proxies.insert(smol_str::SmolStr::from(name), proxy);
         }
 
         let resolver = Arc::new(Resolver::new(
@@ -1551,7 +1551,7 @@ mod delay_support {
         use super::*;
         let mut proxies = std::collections::HashMap::new();
         for (name, proxy) in named {
-            proxies.insert(name.to_string(), proxy);
+            proxies.insert(smol_str::SmolStr::from(name), proxy);
         }
 
         let resolver = Arc::new(Resolver::new(

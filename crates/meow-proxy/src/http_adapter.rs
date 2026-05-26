@@ -27,7 +27,6 @@ use meow_common::{
 };
 use smol_str::SmolStr;
 use std::fmt;
-use std::fmt::Write as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::debug;
 
@@ -116,20 +115,25 @@ impl HttpAdapter {
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        let mut req = format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n");
+        use std::io::Write as _;
+        let mut buf = [0u8; 1024];
+        let mut cursor: &mut [u8] = &mut buf;
+        let _ = write!(cursor, "CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n");
 
         if let Some((user, pass)) = &self.auth {
             let creds = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
-            let _ = write!(req, "Proxy-Authorization: Basic {creds}\r\n");
+            let _ = write!(cursor, "Proxy-Authorization: Basic {creds}\r\n");
         }
 
         for (k, v) in &self.extra_headers {
-            let _ = write!(req, "{k}: {v}\r\n");
+            let _ = write!(cursor, "{k}: {v}\r\n");
         }
-        req.push_str("\r\n");
+        let _ = write!(cursor, "\r\n");
+        let remaining = cursor.len();
+        let written = buf.len() - remaining;
 
         stream
-            .write_all(req.as_bytes())
+            .write_all(&buf[..written])
             .await
             .map_err(MeowError::Io)?;
 
@@ -288,6 +292,7 @@ async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut R) -> Result<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     // ─── Helper ──────────────────────────────────────────────────────────────
 
