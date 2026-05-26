@@ -4,6 +4,7 @@ pub mod tls;
 pub use http::sniff_http;
 pub use tls::sniff_tls;
 
+use smol_str::SmolStr;
 use std::time::Duration;
 
 /// Processed sniffer configuration, built by `meow-config` from the
@@ -20,9 +21,9 @@ pub struct SnifferConfig {
     /// Destination ports on which to try HTTP Host extraction.
     pub http_ports: Vec<u16>,
     /// Glob-style domain patterns; sniffed results matching these are discarded.
-    pub skip_domain: Vec<String>,
+    pub skip_domain: Vec<SmolStr>,
     /// Glob-style domain patterns; hosts matching these bypass `parse_pure_ip`.
-    pub force_domain: Vec<String>,
+    pub force_domain: Vec<SmolStr>,
 }
 
 impl Default for SnifferConfig {

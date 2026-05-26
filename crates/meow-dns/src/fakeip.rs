@@ -28,6 +28,7 @@
 use meow_trie::DomainTrie;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
@@ -45,7 +46,7 @@ use lru::LruCache;
 pub trait Store: Send + Sync {
     fn get_by_host(&self, host: &str) -> Option<IpAddr>;
     fn put_by_host(&self, host: &str, ip: IpAddr);
-    fn get_by_ip(&self, ip: IpAddr) -> Option<String>;
+    fn get_by_ip(&self, ip: IpAddr) -> Option<SmolStr>;
     fn put_by_ip(&self, ip: IpAddr, host: &str);
     fn del_by_ip(&self, ip: IpAddr);
     fn exists(&self, ip: IpAddr) -> bool;
@@ -70,8 +71,8 @@ pub trait Store: Send + Sync {
 /// Two-LRU in-memory store. Identical Size for both directions so eviction
 /// pressure is symmetric.
 pub struct MemoryStore {
-    by_host: Mutex<LruCache<String, IpAddr>>,
-    by_ip: Mutex<LruCache<IpAddr, String>>,
+    by_host: Mutex<LruCache<SmolStr, IpAddr>>,
+    by_ip: Mutex<LruCache<IpAddr, SmolStr>>,
 }
 
 impl MemoryStore {
@@ -92,15 +93,15 @@ impl Store for MemoryStore {
         Some(ip)
     }
     fn put_by_host(&self, host: &str, ip: IpAddr) {
-        self.by_host.lock().put(host.to_string(), ip);
+        self.by_host.lock().put(SmolStr::from(host), ip);
     }
-    fn get_by_ip(&self, ip: IpAddr) -> Option<String> {
+    fn get_by_ip(&self, ip: IpAddr) -> Option<SmolStr> {
         let host = self.by_ip.lock().get(&ip).cloned()?;
         let _ = self.by_host.lock().get(&host);
         Some(host)
     }
     fn put_by_ip(&self, ip: IpAddr, host: &str) {
-        self.by_ip.lock().put(ip, host.to_string());
+        self.by_ip.lock().put(ip, SmolStr::from(host));
     }
     fn del_by_ip(&self, ip: IpAddr) {
         if let Some(host) = self.by_ip.lock().pop(&ip) {
@@ -144,7 +145,7 @@ pub struct FileStore {
     state: Arc<Mutex<PersistedSnapshot>>,
     /// In-memory reverse map rebuilt from `state.entries` at load time and
     /// kept in sync on mutation. Kept separate so `Store::get_by_ip` is O(1).
-    reverse: Mutex<HashMap<IpAddr, String>>,
+    reverse: Mutex<HashMap<IpAddr, SmolStr>>,
     dirty: Arc<AtomicBool>,
     notify: Arc<tokio::sync::Notify>,
 }
@@ -181,7 +182,7 @@ impl FileStore {
         let reverse = snapshot
             .entries
             .iter()
-            .map(|(h, ip)| (*ip, h.clone()))
+            .map(|(h, ip)| (*ip, SmolStr::from(h.as_str())))
             .collect();
 
         let state = Arc::new(Mutex::new(snapshot));
@@ -273,11 +274,11 @@ impl Store for FileStore {
         drop(s);
         self.mark_dirty();
     }
-    fn get_by_ip(&self, ip: IpAddr) -> Option<String> {
+    fn get_by_ip(&self, ip: IpAddr) -> Option<SmolStr> {
         self.reverse.lock().get(&ip).cloned()
     }
     fn put_by_ip(&self, ip: IpAddr, host: &str) {
-        self.reverse.lock().insert(ip, host.to_string());
+        self.reverse.lock().insert(ip, SmolStr::from(host));
         // `put_by_host` is the canonical persistence path; pool calls both,
         // so we don't need to write the file twice. But we DO need to ensure
         // a `put_by_ip` without a matching `put_by_host` still persists
@@ -289,7 +290,7 @@ impl Store for FileStore {
         let host = self.reverse.lock().remove(&ip);
         if let Some(host) = host {
             let mut s = self.state.lock();
-            s.entries.remove(&host);
+            s.entries.remove(host.as_str());
             drop(s);
             self.mark_dirty();
         }
@@ -407,7 +408,7 @@ impl Pool {
 
     /// Reverse lookup: host that `ip` was allocated to, if any. Excludes
     /// the gateway and broadcast addresses — they are not real allocations.
-    pub fn look_back(&self, ip: IpAddr) -> Option<String> {
+    pub fn look_back(&self, ip: IpAddr) -> Option<SmolStr> {
         if ip == self.gateway || ip == self.last {
             return None;
         }

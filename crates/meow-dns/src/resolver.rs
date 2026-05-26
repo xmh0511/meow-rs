@@ -830,17 +830,14 @@ impl Resolver {
     }
 
     pub fn reverse_lookup(&self, ip: IpAddr) -> Option<SmolStr> {
-        // Fake-IP pools own the authoritative reverse mapping for their
-        // synthesised IPs. Consult them first; fall back to the snooping
-        // cache for `Mapping` mode or real-IP hits.
         if let Some(pool) = &self.fakeip_v4 {
             if let Some(host) = pool.look_back(ip) {
-                return Some(SmolStr::from(host));
+                return Some(host);
             }
         }
         if let Some(pool) = &self.fakeip_v6 {
             if let Some(host) = pool.look_back(ip) {
-                return Some(SmolStr::from(host));
+                return Some(host);
             }
         }
         self.cache.reverse_lookup(ip)

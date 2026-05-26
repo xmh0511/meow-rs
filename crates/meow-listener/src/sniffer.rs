@@ -223,7 +223,7 @@ mod tests {
             enable: true,
             parse_pure_ip: true,
             tls_ports: vec![443],
-            force_domain: vec!["+.example.com".to_string()],
+            force_domain: vec!["+.example.com".into()],
             ..Default::default()
         };
         let rt = make_runtime(cfg);
@@ -243,7 +243,7 @@ mod tests {
             enable: true,
             parse_pure_ip: false,
             tls_ports: vec![443],
-            skip_domain: vec!["+.example.com".to_string()],
+            skip_domain: vec!["+.example.com".into()],
             ..Default::default()
         };
         let rt = make_runtime(cfg);
@@ -405,7 +405,7 @@ mod tests {
         let cfg = SnifferConfig {
             enable: true,
             override_destination: true,
-            skip_domain: vec!["+.ads.example.com".to_string()],
+            skip_domain: vec!["+.ads.example.com".into()],
             ..Default::default()
         };
         let rt = make_runtime(cfg);

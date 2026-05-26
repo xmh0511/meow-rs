@@ -18,6 +18,7 @@ use meow_common::{Proxy, Rule, SnifferConfig, TunnelMode};
 use meow_dns::Resolver;
 use proxy_provider::ProxyProvider;
 use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -409,8 +410,18 @@ fn parse_sniffer_config(raw: &raw::RawConfig) -> Result<SnifferConfig, anyhow::E
                 override_destination: rs.override_destination.unwrap_or(false),
                 tls_ports,
                 http_ports,
-                skip_domain: rs.skip_domain.clone().unwrap_or_default(),
-                force_domain: rs.force_domain.clone().unwrap_or_default(),
+                skip_domain: rs
+                    .skip_domain
+                    .iter()
+                    .flatten()
+                    .map(|s| SmolStr::from(s.as_str()))
+                    .collect(),
+                force_domain: rs
+                    .force_domain
+                    .iter()
+                    .flatten()
+                    .map(|s| SmolStr::from(s.as_str()))
+                    .collect(),
             })
         }
         None if has_tproxy_sni => {
