@@ -557,7 +557,11 @@ async fn boring_deferred_fingerprint_connects_with_warn() {
 }
 
 // ─── B9: TlsLayer::new succeeds with ECH config (no boring-tls absent error) ──
-
+//
+// When the `ech` feature is also on, TlsLayer routes ECH through rustls
+// (not boring) and eagerly validates the config bytes, so this test only
+// applies when boring is the sole ECH backend.
+#[cfg(not(feature = "ech"))]
 #[tokio::test]
 async fn boring_ech_construction_ok() {
     // TlsLayer::new must NOT return Err here.  The "ech-opts requires boring-tls"
@@ -577,7 +581,7 @@ async fn boring_ech_construction_ok() {
 }
 
 // ─── B10: set_ech_config_list is called on ConnectConfiguration ───────────────
-
+#[cfg(not(feature = "ech"))]
 #[tokio::test]
 async fn boring_ech_connect_path_exercised() {
     // Passes ECH bytes through BoringInner::connect so that
@@ -1045,6 +1049,7 @@ async fn c15_ech_retry_config_on_mismatch() {
 //      retry_configs containing A.  Layer self-heals: stored ECH now == A.
 //   3. Fresh TCP, second `connect()` on the *same* `TlsLayer` → handshake
 //      now uses A → succeeds with `ech_accepted == true`.
+#[cfg(not(feature = "ech"))]
 #[tokio::test]
 async fn c16_ech_self_heal_uses_retry_configs_on_next_connect() {
     install_crypto_provider();
