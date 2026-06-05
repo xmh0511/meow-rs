@@ -1030,13 +1030,7 @@ async fn probe_and_record(
     expected: Option<&str>,
     timeout: Duration,
 ) -> Result<u16, meow_proxy::health::UrlTestError> {
-    let adapter: &dyn meow_common::ProxyAdapter = proxy.as_ref();
-    let result = meow_proxy::health::url_test(adapter, url, expected, timeout).await;
-    match &result {
-        Ok(d) => proxy.health().record_delay(*d),
-        Err(_) => proxy.health().record_delay(0),
-    }
-    result
+    meow_proxy::health::probe_and_record(proxy, url, expected, timeout).await
 }
 
 async fn get_proxy_delay(
