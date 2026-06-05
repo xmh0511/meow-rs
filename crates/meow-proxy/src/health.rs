@@ -1,4 +1,4 @@
-use meow_common::ProxyAdapter;
+use meow_common::{Proxy, ProxyAdapter};
 use smol_str::SmolStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -69,6 +69,25 @@ pub async fn url_test(
             Err(UrlTestError::Timeout)
         }
     }
+}
+
+/// Probe a proxy and record the result in its [`ProxyHealth`].
+///
+/// On success the measured delay (ms) is recorded; on any failure `0` is
+/// recorded so `last_delay == 0` and `alive() == false`.
+pub async fn probe_and_record(
+    proxy: &Arc<dyn Proxy>,
+    url: &str,
+    expected: Option<&str>,
+    timeout: Duration,
+) -> Result<u16, UrlTestError> {
+    let adapter: &dyn ProxyAdapter = proxy.as_ref();
+    let result = url_test(adapter, url, expected, timeout).await;
+    match &result {
+        Ok(d) => proxy.health().record_delay(*d),
+        Err(_) => proxy.health().record_delay(0),
+    }
+    result
 }
 
 async fn probe_once(

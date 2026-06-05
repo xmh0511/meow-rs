@@ -207,7 +207,7 @@ async fn handle_socks5_inner(
                 Err(e) => debug!("SOCKS5 relay error: {}", e),
             }
         }
-        Err(e) => warn!("SOCKS5 dial error: {}", e),
+        Err(e) => warn!("{} SOCKS5 dial error: {}", metadata.remote_address(), e),
     }
 
     Ok(())

@@ -203,7 +203,11 @@ async fn handle_http_inner(
                     Err(e) => debug!("HTTP CONNECT relay error: {}", e),
                 }
             }
-            Err(e) => warn!("HTTP CONNECT dial error: {}", e),
+            Err(e) => warn!(
+                "{} HTTP CONNECT dial error: {}",
+                metadata.remote_address(),
+                e
+            ),
         }
         // _guard drops here, removing the entry from Statistics.
     } else {
@@ -307,7 +311,7 @@ async fn handle_http_inner(
                 }
             }
             Err(e) => {
-                warn!("HTTP dial error: {}", e);
+                warn!("{}:{} HTTP dial error: {}", host, port, e);
                 stream
                     .write_all(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
                     .await?;
