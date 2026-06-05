@@ -43,14 +43,18 @@ cargo clippy --all-targets
 Listeners (HTTP/SOCKS5/Mixed/TProxy)
         |
         v
-    Tunnel (routing engine)  <-->  DNS Resolver (Normal/Snooping)
-        |
-    Rule Matching Engine
-        |
+    Tunnel (routing engine)  <-->  DNS Resolver (Snooping/Cache/FakeIP)
+        |                                   ^
+    Rule Matching Engine                    |
+        |                            DNS Server (:1053)
         v
-  Proxy Adapters / Groups  --->  Remote Server
+  Proxy Adapters / Groups  --->  Transport (TLS/WS/gRPC/H2/ECH)  --->  Remote
+        ^
+        |  (periodic probes)
+  Health Check Task
 
-  REST API Server (Axum)   --->  Runtime control
+  REST API + Web UI (Axum)  --->  Runtime control
+  Subscription Refresh      --->  Auto-update proxy lists
 ```
 
 ### Workspace Crates
@@ -62,19 +66,19 @@ The workspace has 12 crates (see also [ADR-0009](docs/adr/0009-cleanup-scope.md)
 | `meow-common` | Core traits and types (`ProxyAdapter`, `Rule`, `Metadata`, `ConnContext`) — the "contracts" crate |
 | `meow-trie` | Domain trie for efficient pattern matching |
 | `meow-transport` | Composable stream-transport layers (TLS, WebSocket, gRPC, HTTP/2, HTTP Upgrade) — protocol-agnostic, no dep on other meow-rs crates (see [ADR-0001](docs/adr/0001-meow-transport-crate.md)) |
-| `meow-proxy` | Proxy protocol implementations (SS, Trojan, VLESS, Direct, Reject) and groups (Selector, URLTest, Fallback) |
+| `meow-proxy` | Proxy protocol implementations (SS, Trojan, VLESS, Direct, Reject), groups (Selector, URLTest, Fallback, LoadBalance, Relay), and health probing |
 | `meow-rules` | Rule matching engine and parser (domain, IP-CIDR, GeoIP, process, logic composition) |
 | `meow-dns` | DNS resolver, cache, DNS snooping (IP→domain reverse table), UDP server |
 | `meow-tunnel` | Core routing engine: TCP/UDP relay, rule matching dispatch, connection statistics |
 | `meow-listener` | Inbound protocol handlers (Mixed/HTTP/SOCKS5/TProxy) |
 | `meow-config` | YAML configuration parsing into typed structs |
 | `meow-api` | REST API server (Axum) for proxies, rules, connections, configs, traffic, DNS query |
-| `meow-app` | CLI entry point (`main.rs`) — wires config → tunnel → listeners → DNS → API |
+| `meow-app` | CLI entry point (`main.rs`) — wires config → tunnel → listeners → DNS → API → health checks → subscription refresh |
 | `meow-bench` | Standalone benchmark binary (throughput, latency, connection-rate, DNS, memory, binary-size) |
 
 ### Startup Flow
 
-`meow-app/src/main.rs` → parse CLI args → `meow_config::load_config()` → create `Tunnel` → spawn DNS server, API server, listeners (Mixed/SOCKS/HTTP/TProxy) as tokio tasks → await SIGINT/SIGTERM.
+`meow-app/src/main.rs` → parse CLI args → `meow_config::load_config()` → create `Tunnel` → spawn health checks for fallback/url-test groups → spawn DNS server, API server, listeners (Mixed/SOCKS/HTTP/TProxy) as tokio tasks → await SIGINT/SIGTERM.
 
 ### Key Patterns
 

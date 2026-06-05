@@ -52,9 +52,6 @@ a:hover { text-decoration: underline; }
 /* Architecture */
 .arch { padding: 60px 0; }
 .arch h2 { font-size: 32px; text-align: center; margin-bottom: 32px; font-weight: 700; }
-.arch-diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 14px; white-space: pre; overflow-x: auto; line-height: 1.8; color: var(--muted); text-align: center; }
-.arch-diagram .hl { color: var(--accent); }
-.arch-diagram .hl2 { color: var(--green); }
 
 /* Crates table */
 .crates { padding: 40px 0 60px; }
@@ -137,7 +134,7 @@ footer a { color: var(--accent); }
       </div>
       <div class="card">
         <h3><span class="icon">&#x2699;</span> Proxy Groups</h3>
-        <p>Selector, URL-Test, Fallback, LoadBalance (round-robin / consistent-hashing), and Relay (chained hops) with multi-pass dependency resolution.</p>
+        <p>Selector, URL-Test, Fallback, LoadBalance, and Relay groups with periodic health checks. Dead nodes are auto-skipped by fallback/url-test groups.</p>
       </div>
       <div class="card">
         <h3><span class="icon">&#x1F4E6;</span> Easy Deployment</h3>
@@ -170,17 +167,115 @@ footer a { color: var(--accent); }
 <section class="arch">
   <div class="container">
     <h2>Architecture</h2>
-    <div class="arch-diagram"><span class="hl">Listeners</span> (HTTP / SOCKS5 / Mixed / TProxy)
-        |
-        v
-    <span class="hl">Tunnel</span> (routing engine)  &lt;--&gt;  <span class="hl2">DNS Resolver</span> (Normal / Snooping)
-        |
-    <span class="hl">Rule Matching Engine</span>
-        |
-        v
-  <span class="hl">Proxy Adapters / Groups</span>  ---&gt;  Remote Server
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:24px;overflow-x:auto;">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 520" style="width:100%;max-width:820px;display:block;margin:0 auto;" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif">
+      <defs>
+        <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#475569"/></marker>
+        <marker id="ah-b" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#60a5fa"/></marker>
+        <marker id="ah-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#34d399"/></marker>
+      </defs>
 
-  <span class="hl2">REST API + Web UI</span> (Axum)  ---&gt;  Runtime Control</div>
+      <!-- Listeners -->
+      <rect x="200" y="10" width="420" height="52" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="410" y="32" text-anchor="middle" fill="#60a5fa" font-size="15" font-weight="700">Listeners</text>
+      <text x="410" y="50" text-anchor="middle" fill="#94a3b8" font-size="11">HTTP  ·  SOCKS5  ·  Mixed  ·  TProxy</text>
+
+      <!-- Arrow: Listeners → Tunnel -->
+      <line x1="410" y1="62" x2="410" y2="98" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- Tunnel -->
+      <rect x="240" y="100" width="340" height="48" rx="10" fill="#1a2744" stroke="#60a5fa" stroke-width="1.5"/>
+      <text x="410" y="130" text-anchor="middle" fill="#60a5fa" font-size="15" font-weight="700">Tunnel</text>
+      <text x="340" y="130" text-anchor="end" fill="#94a3b8" font-size="10">(routing engine)</text>
+
+      <!-- DNS Resolver -->
+      <rect x="630" y="100" width="180" height="48" rx="10" fill="#0f2b1d" stroke="#34d399" stroke-width="1.5"/>
+      <text x="720" y="126" text-anchor="middle" fill="#34d399" font-size="14" font-weight="600">DNS Resolver</text>
+      <text x="720" y="141" text-anchor="middle" fill="#6ee7b7" font-size="10">Snooping · Cache · FakeIP</text>
+
+      <!-- Arrow: Tunnel ↔ DNS -->
+      <line x1="580" y1="124" x2="628" y2="124" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-g)"/>
+      <line x1="628" y1="118" x2="582" y2="118" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-g)"/>
+
+      <!-- Arrow: Tunnel → Rules -->
+      <line x1="410" y1="148" x2="410" y2="188" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- Rule Engine -->
+      <rect x="230" y="190" width="360" height="48" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="410" y="218" text-anchor="middle" fill="#e2e8f0" font-size="14" font-weight="600">Rule Matching Engine</text>
+      <text x="410" y="232" text-anchor="middle" fill="#94a3b8" font-size="10">Domain · IP-CIDR · GeoIP · Process · Logic</text>
+
+      <!-- Arrow: Rules → Groups -->
+      <line x1="410" y1="238" x2="410" y2="278" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- Proxy Groups -->
+      <rect x="200" y="280" width="420" height="56" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="410" y="306" text-anchor="middle" fill="#e2e8f0" font-size="14" font-weight="600">Proxy Adapters &amp; Groups</text>
+      <text x="410" y="322" text-anchor="middle" fill="#94a3b8" font-size="10">Shadowsocks · Trojan · VLESS · Direct · Reject  |  Selector · URLTest · Fallback</text>
+
+      <!-- Arrow: Groups → Remote -->
+      <line x1="620" y1="308" x2="710" y2="308" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- Remote Servers -->
+      <rect x="714" y="286" width="96" height="44" rx="10" fill="#1a1a2e" stroke="#818cf8" stroke-width="1.5"/>
+      <text x="762" y="312" text-anchor="middle" fill="#818cf8" font-size="12" font-weight="600">Remote</text>
+
+      <!-- Health Check -->
+      <rect x="10" y="280" width="160" height="56" rx="10" fill="#1e293b" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <text x="90" y="306" text-anchor="middle" fill="#fb923c" font-size="12" font-weight="600">Health Check</text>
+      <text x="90" y="322" text-anchor="middle" fill="#94a3b8" font-size="10">Periodic probes</text>
+
+      <!-- Arrow: Health → Groups -->
+      <line x1="170" y1="308" x2="198" y2="308" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah)"/>
+
+      <!-- REST API -->
+      <rect x="125" y="400" width="240" height="48" rx="10" fill="#0f2b1d" stroke="#34d399" stroke-width="1.5"/>
+      <text x="245" y="422" text-anchor="middle" fill="#34d399" font-size="14" font-weight="600">REST API + Web UI</text>
+      <text x="245" y="437" text-anchor="middle" fill="#6ee7b7" font-size="10">Axum · WebSocket logs · Dashboard</text>
+
+      <!-- Arrow: API → Tunnel -->
+      <line x1="245" y1="400" x2="350" y2="152" stroke="#34d399" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah-g)"/>
+
+      <!-- Subscriptions -->
+      <rect x="420" y="400" width="220" height="48" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5" stroke-dasharray="4,3"/>
+      <text x="530" y="422" text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="600">Subscription Refresh</text>
+      <text x="530" y="437" text-anchor="middle" fill="#64748b" font-size="10">Auto-update · Clash YAML</text>
+
+      <!-- Arrow: Sub → Tunnel -->
+      <line x1="470" y1="400" x2="440" y2="152" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah)"/>
+
+      <!-- Transport layer label -->
+      <rect x="630" y="190" width="180" height="48" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="720" y="216" text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="600">Transport Layers</text>
+      <text x="720" y="232" text-anchor="middle" fill="#64748b" font-size="10">TLS · WS · gRPC · H2 · ECH</text>
+
+      <!-- Arrow: Transport → Remote -->
+      <line x1="720" y1="238" x2="762" y2="284" stroke="#475569" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#ah)"/>
+
+      <!-- DNS Server box -->
+      <rect x="630" y="10" width="180" height="48" rx="10" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="720" y="32" text-anchor="middle" fill="#94a3b8" font-size="12" font-weight="600">DNS Server</text>
+      <text x="720" y="48" text-anchor="middle" fill="#64748b" font-size="10">UDP :1053</text>
+
+      <!-- Arrow: DNS Server → Resolver -->
+      <line x1="720" y1="58" x2="720" y2="98" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+
+      <!-- Legend -->
+      <g transform="translate(10,470)">
+        <text x="0" y="12" fill="#64748b" font-size="10" font-weight="600">LEGEND</text>
+        <line x1="60" y1="8" x2="90" y2="8" stroke="#475569" stroke-width="1.5" marker-end="url(#ah)"/>
+        <text x="96" y="12" fill="#64748b" font-size="10">data flow</text>
+        <line x1="160" y1="8" x2="190" y2="8" stroke="#475569" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah)"/>
+        <text x="196" y="12" fill="#64748b" font-size="10">control / background</text>
+        <rect x="310" y="0" width="14" height="14" rx="3" fill="none" stroke="#60a5fa" stroke-width="1.5"/>
+        <text x="330" y="12" fill="#64748b" font-size="10">core</text>
+        <rect x="370" y="0" width="14" height="14" rx="3" fill="none" stroke="#34d399" stroke-width="1.5"/>
+        <text x="390" y="12" fill="#64748b" font-size="10">DNS / API</text>
+        <rect x="450" y="0" width="14" height="14" rx="3" fill="none" stroke="#fb923c" stroke-width="1.5" stroke-dasharray="4,3"/>
+        <text x="470" y="12" fill="#64748b" font-size="10">background task</text>
+      </g>
+    </svg>
+    </div>
   </div>
 </section>
 
@@ -190,17 +285,18 @@ footer a { color: var(--accent); }
     <table>
       <thead><tr><th>Crate</th><th>Purpose</th></tr></thead>
       <tbody>
-        <tr><td>meow-common</td><td>Core traits and types (ProxyAdapter, Rule, Metadata)</td></tr>
+        <tr><td>meow-common</td><td>Core traits and types (ProxyAdapter, Rule, Metadata, ProxyHealth)</td></tr>
         <tr><td>meow-trie</td><td>Domain trie for efficient pattern matching</td></tr>
-        <tr><td>meow-transport</td><td>TLS (rustls + BoringSSL), WebSocket, gRPC, H2, HTTPUpgrade</td></tr>
-        <tr><td>meow-proxy</td><td>Proxy protocol implementations and groups</td></tr>
-        <tr><td>meow-rules</td><td>Rule matching engine and parser</td></tr>
-        <tr><td>meow-dns</td><td>DNS resolver, cache, DNS snooping, server</td></tr>
-        <tr><td>meow-tunnel</td><td>Core routing, TCP/UDP relay, statistics</td></tr>
+        <tr><td>meow-transport</td><td>TLS (rustls + BoringSSL ECH), WebSocket, gRPC, H2, HTTPUpgrade</td></tr>
+        <tr><td>meow-proxy</td><td>Proxy protocols (SS, Trojan, VLESS) and groups (Selector, URLTest, Fallback, LoadBalance, Relay)</td></tr>
+        <tr><td>meow-rules</td><td>Rule matching engine and parser with logic composition</td></tr>
+        <tr><td>meow-dns</td><td>DNS resolver, cache, snooping (IP&rarr;domain), FakeIP, UDP server</td></tr>
+        <tr><td>meow-tunnel</td><td>Core routing engine, TCP/UDP relay, connection statistics</td></tr>
         <tr><td>meow-listener</td><td>Inbound handlers (Mixed / HTTP / SOCKS5 / TProxy)</td></tr>
-        <tr><td>meow-config</td><td>YAML config parsing, subscription fetcher, persistence</td></tr>
+        <tr><td>meow-config</td><td>YAML config parsing, subscription fetcher, proxy providers</td></tr>
         <tr><td>meow-api</td><td>REST API (Axum) + embedded web dashboard</td></tr>
-        <tr><td>meow-app</td><td>CLI entry point</td></tr>
+        <tr><td>meow-app</td><td>CLI entry point, health checks, subscription refresh, geodata fetch</td></tr>
+        <tr><td>meow-bench</td><td>Standalone benchmark binary (throughput, latency, connection-rate, DNS, memory)</td></tr>
       </tbody>
     </table>
   </div>
