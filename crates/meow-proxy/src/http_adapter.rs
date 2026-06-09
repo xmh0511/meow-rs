@@ -45,8 +45,9 @@ pub struct HttpAdapter {
     addr_str: SmolStr,
     /// `Some((username, password))` — both present or neither (ADR-0002 Class A).
     auth: Option<(String, String)>,
-    tls: bool,
-    skip_cert_verify: bool,
+    /// Built once at construction (rustls ClientConfig + root store are
+    /// expensive); `TlsLayer::connect` is safe to call concurrently.
+    tls_layer: Option<meow_transport::tls::TlsLayer>,
     /// Extra headers injected into the CONNECT request only.
     extra_headers: Vec<(String, String)>,
     health: ProxyHealth,
@@ -66,14 +67,26 @@ impl HttpAdapter {
         skip_cert_verify: bool,
         extra_headers: Vec<(String, String)>,
     ) -> Self {
+        // Hoisted out of the dial path: TlsLayer::new clones the webpki root
+        // store and builds verifier + crypto provider — per-adapter, not
+        // per-connection (same pattern as TrojanAdapter::new).
+        let tls_layer = tls.then(|| {
+            use meow_transport::tls::{TlsConfig, TlsLayer};
+            let tls_cfg = TlsConfig {
+                skip_cert_verify,
+                ..TlsConfig::new(server)
+            };
+            TlsLayer::new(&tls_cfg)
+                .expect("HttpAdapter: failed to build TlsLayer — check TLS config")
+        });
+
         Self {
             name: SmolStr::from(name),
             addr_str: SmolStr::from(format!("{server}:{port}")),
             server: SmolStr::from(server),
             port,
             auth,
-            tls,
-            skip_cert_verify,
+            tls_layer,
             extra_headers,
             health: ProxyHealth::new(),
         }
@@ -85,15 +98,8 @@ impl HttpAdapter {
             .await
             .map_err(MeowError::Io)?;
 
-        if self.tls {
-            use meow_transport::tls::{TlsConfig, TlsLayer};
+        if let Some(tls_layer) = &self.tls_layer {
             use meow_transport::Transport;
-
-            let tls_cfg = TlsConfig {
-                skip_cert_verify: self.skip_cert_verify,
-                ..TlsConfig::new(self.server.as_str())
-            };
-            let tls_layer = TlsLayer::new(&tls_cfg).map_err(|e| MeowError::Proxy(e.to_string()))?;
             tls_layer
                 .connect(Box::new(tcp))
                 .await
