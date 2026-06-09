@@ -83,6 +83,7 @@ async fn recv_text(ws: &mut WsStream) -> String {
         .expect("ws recv error")
         .into_text()
         .unwrap()
+        .to_string()
 }
 
 // ── E. LogMessage serialization (unit tests, no server) ──────────

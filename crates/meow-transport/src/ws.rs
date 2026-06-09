@@ -27,6 +27,7 @@ use base64::Engine as _;
 use futures_util::{Sink, Stream as FuturesStream};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_tungstenite::tungstenite::protocol::{Message, WebSocketConfig};
+use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::WebSocketStream;
 use tracing::warn;
 
@@ -37,15 +38,12 @@ use crate::{Result, Stream, Transport, TransportError};
 /// high concurrency). 4 KiB matches `RELAY_BUF_SIZE` and is plenty for the
 /// streaming-relay use case where each write is a single relay-buf chunk.
 fn ws_config() -> WebSocketConfig {
-    #[allow(deprecated)]
-    WebSocketConfig {
-        max_send_queue: None,
-        write_buffer_size: 4 * 1024,
-        max_write_buffer_size: 64 * 1024,
-        max_message_size: Some(4 * 1024 * 1024),
-        max_frame_size: Some(1024 * 1024),
-        accept_unmasked_frames: false,
-    }
+    WebSocketConfig::default()
+        .write_buffer_size(4 * 1024)
+        .max_write_buffer_size(64 * 1024)
+        .max_message_size(Some(4 * 1024 * 1024))
+        .max_frame_size(Some(1024 * 1024))
+        .accept_unmasked_frames(false)
 }
 
 // ─── Public types ────────────────────────────────────────────────────────────
@@ -256,7 +254,9 @@ struct PendingState {
 
 struct ConnectedState {
     ws: WebSocketStream<BoxStream>,
-    read_buf: Vec<u8>,
+    /// Payload of the last Binary frame, held as received (`Bytes`) and
+    /// drained by `poll_read` — no copy into an intermediate Vec.
+    read_buf: Bytes,
     read_pos: usize,
 }
 
@@ -276,7 +276,7 @@ impl WsStream {
         Self {
             inner: WsInner::Connected(Box::new(ConnectedState {
                 ws,
-                read_buf: Vec::new(),
+                read_buf: Bytes::new(),
                 read_pos: 0,
             })),
         }
@@ -347,7 +347,7 @@ fn poll_upgrade(inner: &mut WsInner, cx: &mut Context<'_>) -> Poll<io::Result<()
         Poll::Ready(Ok(Ok(ws))) => {
             *inner = WsInner::Connected(Box::new(ConnectedState {
                 ws,
-                read_buf: Vec::new(),
+                read_buf: Bytes::new(),
                 read_pos: 0,
             }));
             Poll::Ready(Ok(()))
@@ -479,16 +479,14 @@ impl AsyncWrite for WsStream {
                         }
                         Poll::Pending => return Poll::Pending,
                     }
-                    // ADR-0008 HP-3: this `buf.to_vec()` allocates one
-                    // Vec<u8> per WS-relayed chunk and is the largest per-byte
-                    // allocation in the transport stack. tokio-tungstenite 0.24
-                    // requires `Message::Binary(Vec<u8>)`; 0.26+ accepts
-                    // `Bytes` and would let this be a refcount bump on a
-                    // shared `Bytes` buf. Tracked separately — upgrading the
-                    // tungstenite version is out of scope here because the
-                    // call/handshake API changed.
-                    if let Err(e) =
-                        Pin::new(&mut state.ws).start_send(Message::Binary(buf.to_vec()))
+                    // ADR-0008 HP-3: one `Bytes::copy_from_slice` per
+                    // WS-relayed chunk. With tokio-tungstenite >=0.26 the
+                    // `Bytes` payload is uniquely owned, so tungstenite masks
+                    // it in place (`try_into_mut`) instead of re-copying the
+                    // frame — one allocation per chunk, down from the 0.24
+                    // `Vec<u8>` copy + internal re-copy.
+                    if let Err(e) = Pin::new(&mut state.ws)
+                        .start_send(Message::Binary(Bytes::copy_from_slice(buf)))
                     {
                         return Poll::Ready(Err(io::Error::other(e)));
                     }

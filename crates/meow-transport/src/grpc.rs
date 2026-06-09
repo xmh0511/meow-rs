@@ -327,6 +327,13 @@ impl AsyncRead for GunStream {
                         }
                     }
                 }
+
+                // Incomplete frame, but the gun header already told us the
+                // full length: reserve it once instead of letting the
+                // extend_from_slice below regrow the Vec repeatedly for
+                // large frames (bounded by MAX_GUN_FRAME_LEN).
+                this.pending_frame
+                    .reserve(frame_len - this.pending_frame.len());
             }
 
             // ── Need more bytes from the h2 DATA stream ───────────────────────
