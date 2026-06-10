@@ -424,6 +424,38 @@ mod tests {
     }
 
     #[test]
+    fn ipcidr_rule_set_matches_ipv6() {
+        let set = IpCidrRuleSet::from_entries(&["fd00::/8".to_string()]);
+        assert_eq!(set.len(), 1);
+        assert!(set.matches(&meta_ip("fd12::1"), &helper()));
+        assert!(!set.matches(&meta_ip("2001:db8::1"), &helper()));
+        // An IPv4 destination must not match a v6-only rule set.
+        assert!(!set.matches(&meta_ip("10.1.2.3"), &helper()));
+    }
+
+    #[test]
+    fn ipcidr_rule_set_matches_mixed_families() {
+        let set = IpCidrRuleSet::from_entries(&["10.0.0.0/8".to_string(), "fd00::/8".to_string()]);
+        assert_eq!(set.len(), 2);
+        assert!(set.matches(&meta_ip("10.1.2.3"), &helper()));
+        assert!(set.matches(&meta_ip("fd12::1"), &helper()));
+        assert!(!set.matches(&meta_ip("11.0.0.1"), &helper()));
+        assert!(!set.matches(&meta_ip("2001:db8::1"), &helper()));
+    }
+
+    #[test]
+    fn ipcidr_rule_set_coalesces_adjacent_cidrs_without_semantic_change() {
+        // Adjacent /24s coalesce into one /23 inside the trie; matching
+        // behavior must be identical to checking each CIDR independently.
+        let set =
+            IpCidrRuleSet::from_entries(&["10.0.0.0/24".to_string(), "10.0.1.0/24".to_string()]);
+        assert_eq!(set.len(), 2);
+        assert!(set.matches(&meta_ip("10.0.0.128"), &helper()));
+        assert!(set.matches(&meta_ip("10.0.1.128"), &helper()));
+        assert!(!set.matches(&meta_ip("10.0.2.1"), &helper()));
+    }
+
+    #[test]
     fn classical_rule_set_delegates_to_parser() {
         let ctx = ParserContext::empty();
         let set = ClassicalRuleSet::from_entries(
