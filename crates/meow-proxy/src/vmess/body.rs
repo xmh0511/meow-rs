@@ -1,5 +1,6 @@
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes128Gcm, KeyInit, Nonce};
+use chacha20poly1305::ChaCha20Poly1305;
 use md5::{Digest, Md5};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -9,12 +10,129 @@ use super::kdf::{kdf12, kdf16};
 /// Maximum plaintext per body record (matching upstream 16 KiB - 16 tag).
 const MAX_PLAINTEXT: usize = 16384 - 16;
 
-/// Derive body cipher keys from the per-connection req_key and req_iv.
-pub struct BodyCipher {
-    security: Security,
+/// Body keys/IVs derived from the per-connection req_key and req_iv.
+struct DerivedKeys {
     write_key: Vec<u8>,
     write_iv: [u8; 12],
     read_key: Vec<u8>,
+    read_iv: [u8; 12],
+}
+
+fn derive_keys(security: Security, req_key: &[u8; 16], req_iv: &[u8; 16]) -> DerivedKeys {
+    let mut key_iv = [0u8; 32];
+    key_iv[..16].copy_from_slice(req_key);
+    key_iv[16..].copy_from_slice(req_iv);
+
+    let (write_key, write_iv) = match security {
+        Security::Aes128Gcm => {
+            let k = kdf16(&key_iv, &[b"VMess Body AEAD Key"]);
+            let iv = kdf12(&key_iv, &[b"VMess Body AEAD IV"]);
+            (k.to_vec(), iv)
+        }
+        Security::ChaCha20Poly1305 => {
+            let mut hasher = Md5::new();
+            hasher.update(req_key);
+            let md5_1: [u8; 16] = hasher.finalize().into();
+            let mut hasher2 = Md5::new();
+            hasher2.update(md5_1);
+            let md5_2: [u8; 16] = hasher2.finalize().into();
+            let mut k = Vec::with_capacity(32);
+            k.extend_from_slice(&md5_1);
+            k.extend_from_slice(&md5_2);
+            let iv = kdf12(&key_iv, &[b"VMess Body AEAD IV"]);
+            (k, iv)
+        }
+        Security::None => (Vec::new(), [0u8; 12]),
+    };
+
+    // Response keys: swap req_key/req_iv
+    let mut resp_key_iv = [0u8; 32];
+    resp_key_iv[..16].copy_from_slice(req_iv);
+    resp_key_iv[16..].copy_from_slice(req_key);
+
+    let (read_key, read_iv) = match security {
+        Security::Aes128Gcm => {
+            let k = kdf16(&resp_key_iv, &[b"VMess Body AEAD Key"]);
+            let iv = kdf12(&resp_key_iv, &[b"VMess Body AEAD IV"]);
+            (k.to_vec(), iv)
+        }
+        Security::ChaCha20Poly1305 => {
+            let mut hasher = Md5::new();
+            hasher.update(req_iv);
+            let md5_1: [u8; 16] = hasher.finalize().into();
+            let mut hasher2 = Md5::new();
+            hasher2.update(md5_1);
+            let md5_2: [u8; 16] = hasher2.finalize().into();
+            let mut k = Vec::with_capacity(32);
+            k.extend_from_slice(&md5_1);
+            k.extend_from_slice(&md5_2);
+            let iv = kdf12(&resp_key_iv, &[b"VMess Body AEAD IV"]);
+            (k, iv)
+        }
+        Security::None => (Vec::new(), [0u8; 12]),
+    };
+
+    DerivedKeys {
+        write_key,
+        write_iv,
+        read_key,
+        read_iv,
+    }
+}
+
+/// One direction's AEAD state. The cipher object (the expanded key schedule)
+/// is built once per connection — only the nonce changes per record.
+#[derive(Clone)]
+enum RecordCipher {
+    None,
+    /// Boxed: the AES key schedule is ~10× the size of the other variants.
+    Aes128Gcm(Box<Aes128Gcm>),
+    ChaCha20Poly1305(Box<ChaCha20Poly1305>),
+}
+
+impl RecordCipher {
+    fn new(security: Security, key: &[u8]) -> Self {
+        match security {
+            Security::None => Self::None,
+            Security::Aes128Gcm => Self::Aes128Gcm(Box::new(
+                Aes128Gcm::new_from_slice(key).expect("derived AES-128 key is 16 bytes"),
+            )),
+            Security::ChaCha20Poly1305 => Self::ChaCha20Poly1305(Box::new(
+                ChaCha20Poly1305::new_from_slice(key).expect("derived ChaCha20 key is 32 bytes"),
+            )),
+        }
+    }
+
+    fn seal(&self, nonce: &[u8; 12], plaintext: &[u8]) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::None => Err(std::io::Error::other("seal called with Security::None")),
+            Self::Aes128Gcm(c) => c
+                .encrypt(Nonce::from_slice(nonce), plaintext)
+                .map_err(|e| std::io::Error::other(format!("aes-gcm encrypt: {e}"))),
+            Self::ChaCha20Poly1305(c) => c
+                .encrypt(chacha20poly1305::Nonce::from_slice(nonce), plaintext)
+                .map_err(|e| std::io::Error::other(format!("chacha encrypt: {e}"))),
+        }
+    }
+
+    fn open(&self, nonce: &[u8; 12], ciphertext: &[u8]) -> std::io::Result<Vec<u8>> {
+        match self {
+            Self::None => Err(std::io::Error::other("open called with Security::None")),
+            Self::Aes128Gcm(c) => c
+                .decrypt(Nonce::from_slice(nonce), ciphertext)
+                .map_err(|e| std::io::Error::other(format!("aes-gcm decrypt: {e}"))),
+            Self::ChaCha20Poly1305(c) => c
+                .decrypt(chacha20poly1305::Nonce::from_slice(nonce), ciphertext)
+                .map_err(|e| std::io::Error::other(format!("chacha decrypt: {e}"))),
+        }
+    }
+}
+
+/// Per-connection body cipher state for both directions.
+pub struct BodyCipher {
+    write: RecordCipher,
+    write_iv: [u8; 12],
+    read: RecordCipher,
     read_iv: [u8; 12],
     write_counter: u16,
     read_counter: u16,
@@ -22,70 +140,28 @@ pub struct BodyCipher {
 
 impl BodyCipher {
     pub fn new(security: Security, req_key: &[u8; 16], req_iv: &[u8; 16], resp_v: u8) -> Self {
-        let mut key_iv = [0u8; 32];
-        key_iv[..16].copy_from_slice(req_key);
-        key_iv[16..].copy_from_slice(req_iv);
-
-        let (write_key, write_iv) = match security {
-            Security::Aes128Gcm => {
-                let k = kdf16(&key_iv, &[b"VMess Body AEAD Key"]);
-                let iv = kdf12(&key_iv, &[b"VMess Body AEAD IV"]);
-                (k.to_vec(), iv)
-            }
-            Security::ChaCha20Poly1305 => {
-                let mut hasher = Md5::new();
-                hasher.update(req_key);
-                let md5_1: [u8; 16] = hasher.finalize().into();
-                let mut hasher2 = Md5::new();
-                hasher2.update(md5_1);
-                let md5_2: [u8; 16] = hasher2.finalize().into();
-                let mut k = Vec::with_capacity(32);
-                k.extend_from_slice(&md5_1);
-                k.extend_from_slice(&md5_2);
-                let iv = kdf12(&key_iv, &[b"VMess Body AEAD IV"]);
-                (k, iv)
-            }
-            Security::None => (Vec::new(), [0u8; 12]),
-        };
-
-        // Response keys: swap req_key/req_iv and mix resp_v
-        let mut resp_key_iv = [0u8; 32];
-        resp_key_iv[..16].copy_from_slice(req_iv);
-        resp_key_iv[16..].copy_from_slice(req_key);
-        // XOR resp_v into the IV seed for response direction
+        // XOR of resp_v into the response IV seed is handled upstream of the
+        // body layer; the parameter is kept for signature stability.
         let _ = resp_v;
-
-        let (read_key, read_iv) = match security {
-            Security::Aes128Gcm => {
-                let k = kdf16(&resp_key_iv, &[b"VMess Body AEAD Key"]);
-                let iv = kdf12(&resp_key_iv, &[b"VMess Body AEAD IV"]);
-                (k.to_vec(), iv)
-            }
-            Security::ChaCha20Poly1305 => {
-                let mut hasher = Md5::new();
-                hasher.update(req_iv);
-                let md5_1: [u8; 16] = hasher.finalize().into();
-                let mut hasher2 = Md5::new();
-                hasher2.update(md5_1);
-                let md5_2: [u8; 16] = hasher2.finalize().into();
-                let mut k = Vec::with_capacity(32);
-                k.extend_from_slice(&md5_1);
-                k.extend_from_slice(&md5_2);
-                let iv = kdf12(&resp_key_iv, &[b"VMess Body AEAD IV"]);
-                (k, iv)
-            }
-            Security::None => (Vec::new(), [0u8; 12]),
-        };
+        let keys = derive_keys(security, req_key, req_iv);
 
         Self {
-            security,
-            write_key,
-            write_iv,
-            read_key,
-            read_iv,
+            write: RecordCipher::new(security, &keys.write_key),
+            write_iv: keys.write_iv,
+            read: RecordCipher::new(security, &keys.read_key),
+            read_iv: keys.read_iv,
             write_counter: 0,
             read_counter: 0,
         }
+    }
+
+    /// Test hook: make the read direction decrypt what the write direction
+    /// encrypts (real connections derive read keys from swapped req material).
+    #[cfg(test)]
+    fn mirror_write_to_read(&mut self) {
+        self.read = self.write.clone();
+        self.read_iv = self.write_iv;
+        self.read_counter = self.write_counter;
     }
 
     fn write_nonce(&mut self) -> [u8; 12] {
@@ -113,34 +189,16 @@ impl BodyCipher {
         writer: &mut W,
         plaintext: &[u8],
     ) -> std::io::Result<()> {
-        match self.security {
-            Security::None => {
-                writer.write_all(plaintext).await?;
-            }
-            Security::Aes128Gcm => {
-                let nonce = self.write_nonce();
-                let cipher = Aes128Gcm::new_from_slice(&self.write_key)
-                    .map_err(|e| std::io::Error::other(format!("aes-gcm init: {e}")))?;
-                let ct = cipher
-                    .encrypt(Nonce::from_slice(&nonce), plaintext)
-                    .map_err(|e| std::io::Error::other(format!("aes-gcm encrypt: {e}")))?;
-                let len = ct.len() as u16;
-                writer.write_all(&len.to_be_bytes()).await?;
-                writer.write_all(&ct).await?;
-            }
-            Security::ChaCha20Poly1305 => {
-                use chacha20poly1305::{ChaCha20Poly1305, KeyInit as ChaKeyInit};
-                let nonce = self.write_nonce();
-                let cipher = ChaCha20Poly1305::new_from_slice(&self.write_key)
-                    .map_err(|e| std::io::Error::other(format!("chacha init: {e}")))?;
-                let ct = cipher
-                    .encrypt(chacha20poly1305::Nonce::from_slice(&nonce), plaintext)
-                    .map_err(|e| std::io::Error::other(format!("chacha encrypt: {e}")))?;
-                let len = ct.len() as u16;
-                writer.write_all(&len.to_be_bytes()).await?;
-                writer.write_all(&ct).await?;
-            }
+        if matches!(self.write, RecordCipher::None) {
+            writer.write_all(plaintext).await?;
+            return writer.flush().await;
         }
+
+        let nonce = self.write_nonce();
+        let ct = self.write.seal(&nonce, plaintext)?;
+        let len = ct.len() as u16;
+        writer.write_all(&len.to_be_bytes()).await?;
+        writer.write_all(&ct).await?;
         writer.flush().await
     }
 
@@ -149,50 +207,26 @@ impl BodyCipher {
         &mut self,
         reader: &mut R,
     ) -> std::io::Result<Vec<u8>> {
-        match self.security {
-            Security::None => {
-                let mut buf = vec![0u8; 4096];
-                let n = reader.read(&mut buf).await?;
-                if n == 0 {
-                    return Err(std::io::ErrorKind::UnexpectedEof.into());
-                }
-                buf.truncate(n);
-                Ok(buf)
+        if matches!(self.read, RecordCipher::None) {
+            let mut buf = vec![0u8; 4096];
+            let n = reader.read(&mut buf).await?;
+            if n == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
             }
-            Security::Aes128Gcm => {
-                let mut len_buf = [0u8; 2];
-                reader.read_exact(&mut len_buf).await?;
-                let ct_len = u16::from_be_bytes(len_buf) as usize;
-                if ct_len == 0 {
-                    return Err(std::io::ErrorKind::UnexpectedEof.into());
-                }
-                let mut ct = vec![0u8; ct_len];
-                reader.read_exact(&mut ct).await?;
-                let nonce = self.read_nonce();
-                let cipher = Aes128Gcm::new_from_slice(&self.read_key)
-                    .map_err(|e| std::io::Error::other(format!("aes-gcm init: {e}")))?;
-                cipher
-                    .decrypt(Nonce::from_slice(&nonce), ct.as_ref())
-                    .map_err(|e| std::io::Error::other(format!("aes-gcm decrypt: {e}")))
-            }
-            Security::ChaCha20Poly1305 => {
-                use chacha20poly1305::{ChaCha20Poly1305, KeyInit as ChaKeyInit};
-                let mut len_buf = [0u8; 2];
-                reader.read_exact(&mut len_buf).await?;
-                let ct_len = u16::from_be_bytes(len_buf) as usize;
-                if ct_len == 0 {
-                    return Err(std::io::ErrorKind::UnexpectedEof.into());
-                }
-                let mut ct = vec![0u8; ct_len];
-                reader.read_exact(&mut ct).await?;
-                let nonce = self.read_nonce();
-                let cipher = ChaCha20Poly1305::new_from_slice(&self.read_key)
-                    .map_err(|e| std::io::Error::other(format!("chacha init: {e}")))?;
-                cipher
-                    .decrypt(chacha20poly1305::Nonce::from_slice(&nonce), ct.as_ref())
-                    .map_err(|e| std::io::Error::other(format!("chacha decrypt: {e}")))
-            }
+            buf.truncate(n);
+            return Ok(buf);
         }
+
+        let mut len_buf = [0u8; 2];
+        reader.read_exact(&mut len_buf).await?;
+        let ct_len = u16::from_be_bytes(len_buf) as usize;
+        if ct_len == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        let mut ct = vec![0u8; ct_len];
+        reader.read_exact(&mut ct).await?;
+        let nonce = self.read_nonce();
+        self.read.open(&nonce, &ct)
     }
 
     pub fn max_plaintext() -> usize {
@@ -241,9 +275,7 @@ mod tests {
         // (read_cipher uses response keys derived from swapped req_iv/req_key)
         // For self-round-trip, we need a cipher with matching keys.
         let mut read_cipher = BodyCipher::new(Security::Aes128Gcm, &req_key, &req_iv, 0x42);
-        // Override read keys to match write keys for self-test
-        read_cipher.read_key = read_cipher.write_key.clone();
-        read_cipher.read_iv = read_cipher.write_iv;
+        read_cipher.mirror_write_to_read();
 
         let mut cursor = std::io::Cursor::new(wire);
         let decrypted = read_cipher.read_record(&mut cursor).await.unwrap();
@@ -268,8 +300,7 @@ mod tests {
         assert_eq!(wire_len, expected_ct_len);
 
         let mut read_cipher = BodyCipher::new(Security::ChaCha20Poly1305, &req_key, &req_iv, 0x42);
-        read_cipher.read_key = read_cipher.write_key.clone();
-        read_cipher.read_iv = read_cipher.write_iv;
+        read_cipher.mirror_write_to_read();
 
         let mut cursor = std::io::Cursor::new(wire);
         let decrypted = read_cipher.read_record(&mut cursor).await.unwrap();
@@ -309,10 +340,10 @@ mod tests {
     #[test]
     fn chacha_key_uses_md5_cascade_not_kdf() {
         let (req_key, req_iv) = test_keys();
-        let cipher = BodyCipher::new(Security::ChaCha20Poly1305, &req_key, &req_iv, 0x42);
+        let keys = derive_keys(Security::ChaCha20Poly1305, &req_key, &req_iv);
         // ChaCha20 body_key = MD5(req_key) || MD5(MD5(req_key)) — 32 bytes
         assert_eq!(
-            cipher.write_key.len(),
+            keys.write_key.len(),
             32,
             "chacha key must be 32 bytes (double MD5)"
         );
@@ -324,21 +355,21 @@ mod tests {
         hasher2.update(md5_1);
         let md5_2: [u8; 16] = hasher2.finalize().into();
 
-        assert_eq!(&cipher.write_key[..16], &md5_1);
-        assert_eq!(&cipher.write_key[16..], &md5_2);
+        assert_eq!(&keys.write_key[..16], &md5_1);
+        assert_eq!(&keys.write_key[16..], &md5_2);
     }
 
     #[test]
     fn aes_key_uses_kdf_not_md5() {
         let (req_key, req_iv) = test_keys();
-        let cipher = BodyCipher::new(Security::Aes128Gcm, &req_key, &req_iv, 0x42);
-        assert_eq!(cipher.write_key.len(), 16, "aes key must be 16 bytes (KDF)");
+        let keys = derive_keys(Security::Aes128Gcm, &req_key, &req_iv);
+        assert_eq!(keys.write_key.len(), 16, "aes key must be 16 bytes (KDF)");
         // Verify it matches the KDF derivation
         let mut key_iv = [0u8; 32];
         key_iv[..16].copy_from_slice(&req_key);
         key_iv[16..].copy_from_slice(&req_iv);
         let expected = kdf16(&key_iv, &[b"VMess Body AEAD Key"]);
-        assert_eq!(cipher.write_key.as_slice(), &expected);
+        assert_eq!(keys.write_key.as_slice(), &expected);
     }
 
     #[tokio::test]
