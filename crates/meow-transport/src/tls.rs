@@ -41,12 +41,10 @@
 //! per distinct value when the `boring-tls` feature is not compiled in.
 //! See issue #32 for the tracking issue.
 
+use std::collections::HashMap;
 #[cfg(not(feature = "boring-tls"))]
 use std::collections::HashSet;
 use std::sync::Arc;
-#[cfg(feature = "boring-tls")]
-use std::sync::OnceLock;
-#[cfg(not(feature = "boring-tls"))]
 use std::sync::{Mutex, OnceLock};
 
 use async_trait::async_trait;
@@ -347,6 +345,56 @@ struct RustlsInner {
     server_name: rustls::pki_types::ServerName<'static>,
 }
 
+/// Cache key for [`RUSTLS_CONFIG_CACHE`] — the `TlsConfig` fields that
+/// actually shape the rustls `ClientConfig`. SNI is per-connector
+/// (`ServerName`), not part of the `ClientConfig`, so it stays out.
+#[derive(PartialEq, Eq, Hash)]
+struct RustlsConfigKey {
+    skip_cert_verify: bool,
+    alpn: Vec<String>,
+}
+
+/// Process-wide cache of rustls `ClientConfig`s.
+///
+/// Each `ClientConfig` owns a clone of the webpki root store (~50 KB); with
+/// e.g. 100 TLS proxies from a subscription that's ~5 MB of identical root
+/// stores resident. Mirrors `shared_root_store()` in the BoringSSL backend,
+/// which already refcount-shares its X509 store across all connectors.
+static RUSTLS_CONFIG_CACHE: OnceLock<Mutex<HashMap<RustlsConfigKey, Arc<rustls::ClientConfig>>>> =
+    OnceLock::new();
+
+/// Return a shared `ClientConfig` for `config`, building (and caching) it on
+/// first use.
+///
+/// Only configs without `additional_roots` / `client_cert` / `ech` are
+/// cached: those are rare (tests, mTLS) and would force hashing certificate
+/// blobs into the key — ECH additionally switches the crypto provider. Such
+/// configs get a private, uncached build, same as before.
+fn shared_rustls_config(config: &TlsConfig) -> Result<Arc<rustls::ClientConfig>> {
+    let cacheable =
+        config.additional_roots.is_empty() && config.client_cert.is_none() && config.ech.is_none();
+    if !cacheable {
+        return Ok(Arc::new(RustlsInner::build_rustls_config(config)?));
+    }
+
+    let key = RustlsConfigKey {
+        skip_cert_verify: config.skip_cert_verify,
+        alpn: config.alpn.clone(),
+    };
+    let cache = RUSTLS_CONFIG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    {
+        let map = cache.lock().expect("rustls config cache poisoned");
+        if let Some(shared) = map.get(&key) {
+            return Ok(Arc::clone(shared));
+        }
+    }
+    // Build outside the lock (root-store clone + verifier setup isn't free);
+    // a racing builder for the same key just wins or loses harmlessly.
+    let built = Arc::new(RustlsInner::build_rustls_config(config)?);
+    let mut map = cache.lock().expect("rustls config cache poisoned");
+    Ok(Arc::clone(map.entry(key).or_insert(built)))
+}
+
 /// Build a `rustls::client::EchMode::Enable` from an [`EchOpts`].
 ///
 /// Uses the `aws-lc-rs` HPKE provider — `ring` does not expose HPKE primitives.
@@ -384,8 +432,7 @@ impl RustlsInner {
             .map_err(|e| TransportError::Config(format!("invalid SNI '{sni_str}': {e}")))?
             .to_owned();
 
-        let rustls_config = Self::build_rustls_config(config)?;
-        let connector = tokio_rustls::TlsConnector::from(Arc::new(rustls_config));
+        let connector = tokio_rustls::TlsConnector::from(shared_rustls_config(config)?);
 
         Ok(Self {
             connector,
@@ -1004,5 +1051,47 @@ impl BoringInner {
                 Err(TransportError::Tls(format!("boring TLS handshake: {e}")))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Same (skip_cert_verify, alpn) → same shared ClientConfig allocation;
+    /// different key → different config; uncacheable fields bypass the cache.
+    #[test]
+    fn rustls_client_config_is_shared_per_key() {
+        let a = shared_rustls_config(&TlsConfig::new("a.example")).expect("build a");
+        let b = shared_rustls_config(&TlsConfig::new("b.example")).expect("build b");
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "same key (no skip-verify, no alpn) must share one ClientConfig"
+        );
+
+        let alpn = shared_rustls_config(&TlsConfig {
+            alpn: vec!["h2".into()],
+            ..TlsConfig::new("c.example")
+        })
+        .expect("build alpn");
+        assert!(
+            !Arc::ptr_eq(&a, &alpn),
+            "different alpn must build a distinct ClientConfig"
+        );
+        assert_eq!(alpn.alpn_protocols, vec![b"h2".to_vec()]);
+
+        let skip = shared_rustls_config(&TlsConfig {
+            skip_cert_verify: true,
+            ..TlsConfig::new("d.example")
+        })
+        .expect("build skip");
+        assert!(
+            !Arc::ptr_eq(&a, &skip),
+            "skip_cert_verify must build a distinct ClientConfig"
+        );
+
+        // Re-asking for an existing key hits the cache.
+        let a2 = shared_rustls_config(&TlsConfig::new("e.example")).expect("build a2");
+        assert!(Arc::ptr_eq(&a, &a2));
     }
 }
