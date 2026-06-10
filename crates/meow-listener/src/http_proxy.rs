@@ -3,7 +3,7 @@ use base64::Engine;
 use meow_common::{AuthConfig, ConnType, Metadata, Network};
 use meow_tunnel::{copy_bidirectional_buf, ConnectionGuard, Tunnel, RELAY_BUF_SIZE};
 use smallvec::smallvec;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -135,6 +135,11 @@ async fn handle_http_inner(
             conn_type: ConnType::Https,
             src_ip: Some(src_addr.ip()),
             src_port: src_addr.port(),
+            // When the CONNECT target is an IP literal (common for the Netflix
+            // OCA video CDN and other SNI-less clients), populate dst_ip so
+            // IP-CIDR / GEOIP rules can match — mirrors the SOCKS5 IPv4/IPv6
+            // ATYP path. Without this the connection falls through to MATCH.
+            dst_ip: host_to_ip(host),
             host: Metadata::lower_host(host),
             dst_port: port,
             in_name: in_name.into(),
@@ -220,6 +225,9 @@ async fn handle_http_inner(
             conn_type: ConnType::Http,
             src_ip: Some(src_addr.ip()),
             src_port: src_addr.port(),
+            // Same IP-literal handling as the CONNECT path above, so plain
+            // HTTP proxied to a raw IP still matches IP-CIDR / GEOIP rules.
+            dst_ip: host_to_ip(host),
             host: Metadata::lower_host(host),
             dst_port: port,
             in_name: in_name.into(),
@@ -338,6 +346,19 @@ fn find_crlf_crlf(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+/// Parse an HTTP host token as an IP literal, returning `Some(ip)` when it is
+/// one. Strips the surrounding brackets of an IPv6 literal (`[2606:..]`) so it
+/// parses; returns `None` for hostnames, which are resolved later by the
+/// adapter. Used to populate `Metadata::dst_ip` so IP-CIDR / GEOIP rules match
+/// IP-literal destinations (e.g. Netflix OCA video servers connected by raw IP).
+fn host_to_ip(host: &str) -> Option<IpAddr> {
+    host.strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(host)
+        .parse::<IpAddr>()
+        .ok()
+}
+
 fn parse_host_port(target: &str, default_port: u16) -> (&str, u16) {
     if let Some((host, port_str)) = target.rsplit_once(':') {
         if let Ok(port) = port_str.parse::<u16>() {
@@ -401,4 +422,38 @@ fn parse_proxy_authorization(headers: &[u8]) -> Option<(String, String)> {
         return Some((user.to_string(), pass.to_string()));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn host_to_ip_parses_ipv4_literal() {
+        // Regression: Netflix OCA servers are connected by raw IP via CONNECT.
+        // dst_ip must be populated so IP-CIDR rules (e.g. 23.246.0.0/18) match
+        // instead of falling through to MATCH.
+        assert_eq!(
+            host_to_ip("23.246.15.143"),
+            Some(IpAddr::V4(Ipv4Addr::new(23, 246, 15, 143)))
+        );
+    }
+
+    #[test]
+    fn host_to_ip_parses_bracketed_ipv6_literal() {
+        assert_eq!(
+            host_to_ip("[2606:2800:220:1:248:1893:25c8:1946]"),
+            Some(IpAddr::V6(Ipv6Addr::new(
+                0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25c8, 0x1946
+            )))
+        );
+    }
+
+    #[test]
+    fn host_to_ip_returns_none_for_hostname() {
+        // Hostnames stay None — resolved later by the adapter / pre_resolve.
+        assert_eq!(host_to_ip("www.netflix.com"), None);
+        assert_eq!(host_to_ip("nflxvideo.net"), None);
+    }
 }
