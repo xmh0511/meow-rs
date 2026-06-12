@@ -137,6 +137,15 @@ impl<S> Snell<S> {
         self.reply_consumed = true;
     }
 
+    /// Mutable access to the underlying v4 codec. The `AsyncRead` impl on
+    /// `Snell` maps the zero-chunk half-close into a clean EOF; the reuse
+    /// pool's drain must observe the *raw* tagged error instead, so it can
+    /// distinguish the peer's half-close (conn reusable) from a genuine TCP
+    /// close (conn dead).
+    pub fn v4_conn_mut(&mut self) -> &mut V4Conn<S> {
+        &mut self.inner
+    }
+
     /// Stage a single frame carrying `buf` verbatim as a UDP datagram
     /// payload. The frame is written via the underlying `V4Conn` so the
     /// codec keeps producing valid AEAD frames.
@@ -285,5 +294,200 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Snell<S> {
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::Future;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, DuplexStream};
+
+    /// Wrap an await that could hang so a failure is an assertion instead of
+    /// a test-runner timeout.
+    async fn within<T>(fut: impl Future<Output = T>) -> T {
+        tokio::time::timeout(Duration::from_secs(10), fut)
+            .await
+            .expect("test future timed out")
+    }
+
+    /// Client `Snell` wrapper on one duplex half, mock-server `V4Conn` on the
+    /// other. The v4 codec is symmetric (each direction sends its own salt),
+    /// so a bare `V4Conn` works as the server side.
+    fn rig() -> (Snell<DuplexStream>, V4Conn<DuplexStream>) {
+        let (a, b) = tokio::io::duplex(1 << 16);
+        let psk: Arc<[u8]> = Arc::from(b"test-psk".as_slice());
+        (Snell::new(a, Arc::clone(&psk)), V4Conn::new(b, psk))
+    }
+
+    /// Emit a zero chunk by hand: tokio's `write_all(&[])` short-circuits
+    /// without calling `poll_write`, so drive the poll directly.
+    async fn emit_zero_chunk(conn: &mut V4Conn<DuplexStream>) -> io::Result<usize> {
+        std::future::poll_fn(|cx| Pin::new(&mut *conn).poll_write(cx, &[])).await
+    }
+
+    #[tokio::test]
+    async fn write_header_connect_layout() {
+        let (mut client, mut peer) = rig();
+        within(write_header(&mut client, "example.com", 443, false))
+            .await
+            .unwrap();
+        within(client.flush()).await.unwrap();
+
+        let mut got = [0u8; 17];
+        within(peer.read_exact(&mut got)).await.unwrap();
+        let mut expected = vec![HEADER_VERSION, COMMAND_CONNECT, 0, 11];
+        expected.extend_from_slice(b"example.com");
+        expected.extend_from_slice(&[0x01, 0xBB]); // 443 BE
+        assert_eq!(&got[..], &expected[..]);
+    }
+
+    #[tokio::test]
+    async fn write_header_reuse_uses_connect_v2() {
+        let (mut client, mut peer) = rig();
+        within(write_header(&mut client, "example.com", 443, true))
+            .await
+            .unwrap();
+        within(client.flush()).await.unwrap();
+
+        let mut got = [0u8; 17];
+        within(peer.read_exact(&mut got)).await.unwrap();
+        assert_eq!(got[0], HEADER_VERSION);
+        assert_eq!(got[1], COMMAND_CONNECT_V2);
+    }
+
+    #[tokio::test]
+    async fn write_header_rejects_long_host() {
+        let host = "h".repeat(256);
+        let mut sink = tokio::io::sink();
+        let err = write_header(&mut sink, &host, 80, false).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn write_udp_header_layout() {
+        let (mut client, mut peer) = rig();
+        within(write_udp_header(&mut client)).await.unwrap();
+        within(client.flush()).await.unwrap();
+
+        let mut got = [0u8; 3];
+        within(peer.read_exact(&mut got)).await.unwrap();
+        assert_eq!(got, [HEADER_VERSION, COMMAND_UDP, 0x00]);
+    }
+
+    #[tokio::test]
+    async fn read_reply_accepts_tunnel_and_pong() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_TUNNEL])).await.unwrap();
+        within(peer.flush()).await.unwrap();
+        within(client.read_reply()).await.unwrap();
+
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_PONG])).await.unwrap();
+        within(peer.flush()).await.unwrap();
+        within(client.read_reply()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn read_reply_parses_error_code_and_message() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_ERROR, 42, 5, b'o', b'o', b'p', b's', b'!']))
+            .await
+            .unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let err = within(client.read_reply()).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("42"), "missing error code in: {msg}");
+        assert!(msg.contains("oops!"), "missing error message in: {msg}");
+    }
+
+    #[tokio::test]
+    async fn read_reply_rejects_unknown_code() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[0x7F])).await.unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let err = within(client.read_reply()).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("unknown response code"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_read_consumes_reply_then_yields_data() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_TUNNEL])).await.unwrap();
+        within(peer.write_all(b"hello")).await.unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let mut buf = [0u8; 16];
+        let n = within(client.read(&mut buf)).await.unwrap();
+        assert_eq!(&buf[..n], b"hello");
+
+        // Reply already consumed by the first read — explicit call is a no-op.
+        within(client.read_reply()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn zero_chunk_maps_to_clean_eof() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_TUNNEL])).await.unwrap();
+        within(peer.flush()).await.unwrap();
+        within(emit_zero_chunk(&mut peer)).await.unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let mut buf = [0u8; 8];
+        let n = within(client.read(&mut buf)).await.unwrap();
+        assert_eq!(n, 0, "zero chunk should surface as clean EOF");
+    }
+
+    #[tokio::test]
+    async fn reset_reply_state_consumes_next_status_byte() {
+        let (mut client, mut peer) = rig();
+        within(peer.write_all(&[RESPONSE_TUNNEL])).await.unwrap();
+        within(peer.write_all(b"hello")).await.unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let mut buf = [0u8; 16];
+        let n = within(client.read(&mut buf)).await.unwrap();
+        assert_eq!(&buf[..n], b"hello");
+
+        // Pool-reuse semantics: the next request's status byte is pending
+        // again after a reset.
+        client.reset_reply_state();
+        within(peer.write_all(&[RESPONSE_TUNNEL])).await.unwrap();
+        within(peer.write_all(b"again")).await.unwrap();
+        within(peer.flush()).await.unwrap();
+
+        let n = within(client.read(&mut buf)).await.unwrap();
+        assert_eq!(&buf[..n], b"again");
+    }
+
+    #[tokio::test]
+    async fn write_packet_frame_rejects_oversize() {
+        let (mut client, _peer) = rig();
+        let oversize = vec![0u8; MAX_PAYLOAD_LENGTH + 1];
+        let err = within(client.write_packet_frame(&oversize))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn write_packet_frame_roundtrips() {
+        let (mut client, mut peer) = rig();
+        let n = within(client.write_packet_frame(b"datagram"))
+            .await
+            .unwrap();
+        assert_eq!(n, b"datagram".len());
+
+        // Each datagram is exactly one AEAD frame, so a single read drains it.
+        let mut buf = [0u8; 64];
+        let m = within(peer.read(&mut buf)).await.unwrap();
+        assert_eq!(&buf[..m], b"datagram");
     }
 }

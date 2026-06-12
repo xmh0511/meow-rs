@@ -1799,4 +1799,175 @@ tls: true
         parse_proxy_group(&config, &existing, &Default::default())
             .expect("relay with url+interval must not hard-error");
     }
+
+    // ─── snell proxy parser ───────────────────────────────────────────────────
+
+    #[cfg(feature = "snell")]
+    fn snell_config(yaml: &str) -> HashMap<String, serde_yaml::Value> {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_minimal_ok() {
+        let cfg = snell_config("name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: secret\n");
+        assert!(parse_proxy(&cfg).is_ok());
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_full_ok() {
+        let cfg = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: secret\nversion: 5\nudp: true\nreuse: true\nobfs-opts:\n  mode: http\n  host: bing.com\n",
+        );
+        assert!(parse_proxy(&cfg).is_ok());
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_missing_psk() {
+        let cfg = snell_config("name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\n");
+        let Err(err) = parse_proxy(&cfg) else {
+            panic!("missing psk must hard-error (Class A)");
+        };
+        assert!(err.contains("missing psk"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_missing_server() {
+        let cfg = snell_config("name: sn\ntype: snell\nport: 8388\npsk: secret\n");
+        let Err(err) = parse_proxy(&cfg) else {
+            panic!("missing server must hard-error (Class A)");
+        };
+        assert!(err.contains("missing server"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_missing_port() {
+        let cfg = snell_config("name: sn\ntype: snell\nserver: 1.2.3.4\npsk: secret\n");
+        let Err(err) = parse_proxy(&cfg) else {
+            panic!("missing port must hard-error (Class A)");
+        };
+        assert!(err.contains("missing port"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_rejects_port_zero() {
+        let cfg = snell_config("name: sn\ntype: snell\nserver: 1.2.3.4\nport: 0\npsk: secret\n");
+        let Err(err) = parse_proxy(&cfg) else {
+            panic!("port 0 must hard-error (Class A)");
+        };
+        assert!(err.contains("port must be non-zero"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_rejects_empty_psk() {
+        let cfg = snell_config("name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: ''\n");
+        let Err(err) = parse_proxy(&cfg) else {
+            panic!("empty psk must hard-error (Class A)");
+        };
+        assert!(err.contains("psk must not be empty"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_version_aliases() {
+        for yaml in &[
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: 4\n",
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: v4\n",
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: V5\n",
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: 5\n",
+        ] {
+            let cfg = snell_config(yaml);
+            assert!(parse_proxy(&cfg).is_ok(), "expected Ok for yaml: {yaml}");
+        }
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_rejects_legacy_versions() {
+        for (yaml, ver) in &[
+            (
+                "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: 1\n",
+                "1",
+            ),
+            (
+                "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: 2\n",
+                "2",
+            ),
+            (
+                "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: 3\n",
+                "3",
+            ),
+            (
+                "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: v2\n",
+                "v2",
+            ),
+        ] {
+            let cfg = snell_config(yaml);
+            let Err(err) = parse_proxy(&cfg) else {
+                panic!("legacy version {ver} must hard-error (Class A)");
+            };
+            assert!(
+                err.contains("not supported"),
+                "version {ver}: expected 'not supported' in msg: {err}"
+            );
+        }
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_rejects_unknown_version() {
+        let cfg_six = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: '6'\n",
+        );
+        let Err(err) = parse_proxy(&cfg_six) else {
+            panic!("unknown version '6' must hard-error (Class A)");
+        };
+        assert!(err.contains("unknown version"), "msg: {err}");
+
+        let cfg_bool = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nversion: true\n",
+        );
+        let Err(err) = parse_proxy(&cfg_bool) else {
+            panic!("boolean version must hard-error (Class A)");
+        };
+        assert!(err.contains("must be an integer or string"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_obfs_modes() {
+        let cfg_tls = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nobfs-opts:\n  mode: tls\n",
+        );
+        assert!(parse_proxy(&cfg_tls).is_ok(), "tls obfs mode must be Ok");
+
+        let cfg_none = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nobfs-opts:\n  mode: none\n",
+        );
+        assert!(parse_proxy(&cfg_none).is_ok(), "none obfs mode must be Ok");
+
+        let cfg_socks = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nobfs-opts:\n  mode: socks\n",
+        );
+        let Err(err) = parse_proxy(&cfg_socks) else {
+            panic!("invalid obfs mode 'socks' must hard-error (Class A)");
+        };
+        assert!(err.contains("obfs-opts.mode"), "msg: {err}");
+    }
+
+    #[cfg(feature = "snell")]
+    #[test]
+    fn parse_snell_obfs_host_falls_back_to_server() {
+        // obfs-opts with mode: http but no host key → falls back to server value.
+        let cfg = snell_config(
+            "name: sn\ntype: snell\nserver: 1.2.3.4\nport: 8388\npsk: s\nobfs-opts:\n  mode: http\n",
+        );
+        assert!(parse_proxy(&cfg).is_ok());
+    }
 }

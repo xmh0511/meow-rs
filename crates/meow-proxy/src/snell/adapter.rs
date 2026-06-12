@@ -149,6 +149,14 @@ impl SnellAdapter {
         Ok(Snell::new(inner, Arc::clone(&self.psk)))
     }
 
+    /// Number of idle connections currently parked in the reuse pool.
+    /// Returns 0 when reuse is disabled. Exposed so integration tests can
+    /// synchronize with the background drain-and-return task that runs after
+    /// a pooled connection is dropped, instead of sleeping.
+    pub fn idle_pool_size(&self) -> usize {
+        self.pool.as_ref().map_or(0, |pool| pool.idle_count())
+    }
+
     fn extract_dest(metadata: &Metadata) -> Result<(String, u16)> {
         let port = metadata.dst_port;
         if !metadata.host.is_empty() {
