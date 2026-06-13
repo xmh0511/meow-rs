@@ -116,19 +116,19 @@ Built-in web UI served at `http://<api-addr>/ui` with:
 
 ## Benchmarks
 
-Side-by-side against upstream Go mihomo on the same host (Apple Silicon arm64, macOS 25.5, loopback `127.0.0.1`). Both binaries use identical config: `mode: direct`, SOCKS5 listener on port 17890, DNS disabled. Reproduce with `bash bench.sh` (auto-downloads the latest Go mihomo release).
+Side-by-side against upstream Go mihomo v1.19.27 on the same host (Apple Silicon arm64, macOS 26.4.1, loopback `127.0.0.1`). Both binaries use identical config: `mode: direct`, SOCKS5 listener on port 17890, DNS disabled. Reproduce with `bash bench.sh` (auto-downloads the latest Go mihomo release).
 
-| Metric | mihomo (Go) | meow-rs v0.7.6 | Delta |
+| Metric | mihomo (Go) | meow-rs v0.14.0 | Delta |
 |--------|-------------|--------------------|-------|
-| Binary size (stripped) | 30.5 MB | **5.7 MB** | **−81%** |
-| RSS idle | 26.9 MB | **9.0 MB** | **−67%** |
-| RSS under load (peak) | 35.8 MB | **11.7 MB** | **−67%** |
-| TCP throughput, 64 MB×1 | 6.11 Gbps | 5.41 Gbps | −11% |
-| TCP throughput, 1 MB×10 | 6.23 Gbps | 4.61 Gbps | −26% |
-| TCP throughput, 4 KB×10000 | 0.79 Gbps | 0.87 Gbps | **+10%** |
-| Latency p50 (connect + 1 B echo) | 325 µs | **266 µs** | **−18%** |
-| Latency p99 | 583 µs | **339 µs** | **−42%** |
-| Connections/sec (10 s, concurrency 64) | 711 /s | 712 /s | ±0% |
+| Binary size (stripped) | 40.7 MB | **7.2 MB** | **−82%** |
+| RSS idle | 30.8 MB | **9.7 MB** | **−69%** |
+| RSS under load (peak) | 30.8 MB | **9.7 MB** | **−69%** |
+| TCP throughput, 64 MB×1 | 5.15 Gbps | **5.23 Gbps** | **+2%** |
+| TCP throughput, 1 MB×10 | 4.62 Gbps | 4.15 Gbps | −10% |
+| TCP throughput, 4 KB×10000 | 0.92 Gbps | 0.90 Gbps | −2% |
+| Latency p50 (connect + 1 B echo) | 257 µs | 258 µs | ±0% |
+| Latency p99 | 332 µs | 354 µs | +7% |
+| Connections/sec (10 s, concurrency 64) | 709 /s | 710 /s | ±0% |
 
 Single-run results from `bash bench.sh`; numbers will vary with host load. For the full methodology, three-run-median protocol, and workload definitions (W1–W5), see [ADR-0006](docs/adr/0006-m2-benchmark-methodology.md) and [docs/benchmarks/index.md](docs/benchmarks/index.md).
 
