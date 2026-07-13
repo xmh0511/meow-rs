@@ -242,6 +242,69 @@ jobs:
       - name: Cargo check on MSRV toolchain
         run: cargo check --workspace --all-targets
 
+  windows:
+    runs-on: windows-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: windows
+
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Clippy (no default features)
+        run: cargo clippy --all-targets --no-default-features -- -D warnings
+
+      - name: Build
+        run: cargo build --tests
+
+      - name: Unit tests (windows)
+        shell: bash
+        run: cargo test --lib
+
+      - name: Common types tests (windows)
+        shell: bash
+        run: cargo test --test common_test -- --nocapture
+
+      - name: Config parsing tests (windows)
+        shell: bash
+        run: cargo test --test config_test -- --nocapture
+
+      - name: Rules tests (windows)
+        shell: bash
+        run: cargo test --test rules_test -- --nocapture
+
+      - name: API tests (windows)
+        shell: bash
+        run: cargo test --test api_test -- --nocapture
+
+      - name: Trojan integration tests (windows)
+        shell: bash
+        run: cargo test --test trojan_integration -- --nocapture
+
+      - name: DNS unit tests (windows)
+        shell: bash
+        run: cargo test -p meow-dns --lib -- --nocapture
+
+      - name: Transport TLS tests (windows)
+        shell: bash
+        run: cargo test -p meow-transport --test tls_test -- --nocapture
+
+      - name: Transport WS tests (windows)
+        shell: bash
+        run: cargo test -p meow-transport --test ws_test -- --nocapture
+
   macos:
     runs-on: macos-latest
     needs: lint
