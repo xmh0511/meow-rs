@@ -63,10 +63,6 @@ jobs:
             runner: windows-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
-          - target: aarch64-pc-windows-gnu
-            runner: windows-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
           - target: i686-pc-windows-msvc
             runner: windows-latest
             minimal_budget_bytes: 0
@@ -116,10 +112,6 @@ jobs:
             build_std: true
             toolchain: nightly
             cargo_flags: --no-default-features --features full
-          - target: riscv64gc-unknown-linux-gnu
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
           - target: riscv64gc-unknown-linux-musl
             runner: ubuntu-latest
             minimal_budget_bytes: 0
@@ -127,11 +119,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.toolchain || 'stable' }}
-          targets: ${{ matrix.build_std == true && '' || matrix.target }}
-          components: ${{ matrix.build_std == true && 'rust-src' || '' }}
+      - name: Setup Rust toolchain
+        shell: bash
+        run: |
+          TOOLCHAIN="${{ matrix.toolchain || 'stable' }}"
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$TOOLCHAIN"
+          if [ "${{ matrix.build_std }}" = "true" ]; then
+            rustup component add rust-src --toolchain "$TOOLCHAIN"
+          else
+            rustup target add "${{ matrix.target }}" --toolchain "$TOOLCHAIN"
+          fi
 
       - uses: Swatinem/rust-cache@v2
         with:
