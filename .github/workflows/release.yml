@@ -72,10 +72,12 @@ jobs:
             runner: ubuntu-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
+            cflags: -mno-avx512f
           - target: i686-unknown-linux-musl
             runner: ubuntu-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
+            cflags: -mno-avx512f
           - target: aarch64-unknown-linux-gnu
             runner: ubuntu-latest
             minimal_budget_bytes: 0
@@ -158,6 +160,8 @@ jobs:
           else
             cargo build --release --locked ${{ matrix.cargo_flags }} --target ${{ matrix.target }} $BUILD_STD_FLAG --bin meow
           fi
+        env:
+          CFLAGS: ${{ matrix.cflags || '' }}
 
       - name: Build minimal release binary (stripped, for size check)
         if: matrix.minimal_budget_bytes != 0 && runner.os == 'Linux'
