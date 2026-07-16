@@ -2033,9 +2033,13 @@ async fn read_os_memory_limit_linux() -> u64 {
         };
         if libc::getrlimit(libc::RLIMIT_AS, &mut rl) == 0 && rl.rlim_cur != libc::RLIM_INFINITY {
             #[cfg(target_pointer_width = "32")]
-            { return rl.rlim_cur as u64; }
+            {
+                return rl.rlim_cur as u64;
+            }
             #[cfg(not(target_pointer_width = "32"))]
-            { return rl.rlim_cur; }
+            {
+                return rl.rlim_cur;
+            }
         }
     }
     0
