@@ -477,9 +477,13 @@ async fn connections_json(state: &AppState) -> String {
     let stats = state.tunnel.statistics();
     let (up, down) = stats.snapshot();
     let memory = read_rss_bytes().await;
+    #[allow(clippy::useless_conversion)]
+    let up_i64: i64 = up;
+    #[allow(clippy::useless_conversion)]
+    let down_i64: i64 = down;
     serde_json::to_string(&ConnectionsResponse {
-        upload_total: up.into(),
-        download_total: down.into(),
+        upload_total: up_i64,
+        download_total: down_i64,
         memory,
         connections: stats.active_connections_view(),
     })
@@ -647,6 +651,7 @@ struct TrafficResponse {
 
 fn traffic_json(state: &AppState) -> String {
     let (up, down, up_total, down_total) = state.tunnel.statistics().traffic_snapshot();
+    #[allow(clippy::useless_conversion)]
     serde_json::to_string(&TrafficResponse {
         up: up.into(),
         down: down.into(),
