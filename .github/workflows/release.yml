@@ -21,67 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # - target: x86_64-unknown-linux-musl
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: aarch64-unknown-linux-musl
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 8388608
-          #   minimal_soft_gate: false
-          #   openwrt_archs: >-
-          #     aarch64_generic aarch64_cortex-a53 aarch64_cortex-a72
-          #     aarch64_cortex-a76
-          # - target: armv7-unknown-linux-musleabihf
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          #   cargo_flags: --no-default-features --features full
-          #   openwrt_archs: >-
-          #     arm_cortex-a7_neon-vfpv4 arm_cortex-a8_vfpv3
-          #     arm_cortex-a9_vfpv3-d16 arm_cortex-a15_neon-vfpv4
-          # - target: x86_64-pc-windows-msvc
-          #   runner: windows-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: aarch64-pc-windows-msvc
-          #   runner: windows-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: x86_64-pc-windows-gnu
-          #   runner: windows-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          #   cargo_flags: --no-default-features --features full
-          # - target: i686-pc-windows-msvc
-          #   runner: windows-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: aarch64-unknown-linux-gnu
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: armv7-unknown-linux-gnueabihf
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: x86_64-unknown-linux-gnu
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: i686-unknown-linux-gnu
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          #   cargo_flags: --no-default-features --features full
-          #   use_cross: true
-          # - target: i686-unknown-linux-musl
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          #   cargo_flags: --no-default-features --features full
-          #   use_cross: true
-          # MIPS: tier 3 targets — use cross (Docker) with -Zbuild-std
+          # MIPS: tier 3 — use cross (Docker) with -Zbuild-std
           - target: mipsel-unknown-linux-musl
             runner: ubuntu-latest
             minimal_budget_bytes: 0
@@ -98,43 +38,56 @@ jobs:
             toolchain: nightly
             cargo_flags: --no-default-features --features full
             use_cross: true
-          # - target: x86_64-apple-darwin
-          #   runner: macos-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: aarch64-apple-darwin
-          #   runner: macos-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
-          # - target: riscv64gc-unknown-linux-musl
-          #   runner: ubuntu-latest
-          #   minimal_budget_bytes: 0
-          #   minimal_soft_gate: true
+          # Linux musl
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
-            # aarch64: hard gate — release fails if minimal binary exceeds 8 MiB
             minimal_budget_bytes: 8388608
             minimal_soft_gate: false
-            # Static musl binary → one build serves several OpenWrt arch
-            # labels; the .ipk differs only in the Architecture field (#284).
             openwrt_archs: >-
               aarch64_generic aarch64_cortex-a53 aarch64_cortex-a72
               aarch64_cortex-a76
           - target: armv7-unknown-linux-musleabihf
             runner: ubuntu-latest
-            # armv7: soft gate only for now (no ADR-0007 budget yet)
             minimal_budget_bytes: 0
             minimal_soft_gate: true
-            # boring-sys is broken on 32-bit musl (bindgen emits time64
-            # `time_t: i64` per musl 1.2, while boring passes i32), so build
-            # without the boring-tls default. Trade-off: no ECH/uTLS
-            # fingerprinting on armv7 — everything else in `full` is present.
             cargo_flags: --no-default-features --features full
-            # Rust's armv7 musleabihf baseline is vfpv3-d16 without NEON, so
-            # the same binary is safe on every core listed here (#284).
             openwrt_archs: >-
               arm_cortex-a7_neon-vfpv4 arm_cortex-a8_vfpv3
               arm_cortex-a9_vfpv3-d16 arm_cortex-a15_neon-vfpv4
+          # Linux GNU
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+          - target: armv7-unknown-linux-gnueabihf
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+          - target: i686-unknown-linux-gnu
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+            cargo_flags: --no-default-features --features full
+            use_cross: true
+          - target: i686-unknown-linux-musl
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+            cargo_flags: --no-default-features --features full
+            use_cross: true
+          - target: riscv64gc-unknown-linux-musl
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+          # Windows
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
             minimal_budget_bytes: 0
@@ -152,42 +105,13 @@ jobs:
             runner: windows-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-          - target: armv7-unknown-linux-gnueabihf
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-          # i686: use cross (Docker) — zig doesn't support i686 assembly,
-          # clang causes glibc header mismatch with zigbuild's 2.17 stubs
-          - target: i686-unknown-linux-gnu
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-            cargo_flags: --no-default-features --features full
-            use_cross: true
-          - target: i686-unknown-linux-musl
-            runner: ubuntu-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-            cargo_flags: --no-default-features --features full
-            use_cross: true
+          # macOS
           - target: x86_64-apple-darwin
             runner: macos-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
           - target: aarch64-apple-darwin
             runner: macos-latest
-            minimal_budget_bytes: 0
-            minimal_soft_gate: true
-          - target: riscv64gc-unknown-linux-musl
-            runner: ubuntu-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
     steps:
