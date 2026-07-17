@@ -478,8 +478,8 @@ async fn connections_json(state: &AppState) -> String {
     let (up, down) = stats.snapshot();
     let memory = read_rss_bytes().await;
     serde_json::to_string(&ConnectionsResponse {
-        upload_total: up,
-        download_total: down,
+        upload_total: up.into(),
+        download_total: down.into(),
         memory,
         connections: stats.active_connections_view(),
     })
@@ -648,10 +648,10 @@ struct TrafficResponse {
 fn traffic_json(state: &AppState) -> String {
     let (up, down, up_total, down_total) = state.tunnel.statistics().traffic_snapshot();
     serde_json::to_string(&TrafficResponse {
-        up,
-        down,
-        up_total,
-        down_total,
+        up: up.into(),
+        down: down.into(),
+        up_total: up_total.into(),
+        down_total: down_total.into(),
     })
     .unwrap_or_default()
 }
@@ -1687,26 +1687,36 @@ async fn put_configs(
 // upstream: N/A — meow-rs enhancement; Go mihomo has no native /metrics endpoint.
 
 async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
-    use meow_common::atomic::{AtomicI, AtomicU, Int, Uint};
-    use prometheus_client::encoding::text::encode;
-    use prometheus_client::metrics::counter::Counter;
-    use prometheus_client::metrics::family::Family;
-    use prometheus_client::metrics::gauge::Gauge;
-    use prometheus_client::registry::Registry;
-    use std::sync::atomic::Ordering;
+    // prometheus-client 0.22 requires AtomicU64/AtomicI64. On targets without
+    // 64-bit atomics (e.g. MIPS32) these types don't exist in std, so we
+    // return 501. cfg(target_has_atomic) is the correct gate — i686 Windows
+    // is 32-bit-pointer but DOES have AtomicU64 via CMPXCHG8B.
+    #[cfg(not(target_has_atomic = "64"))]
+    {
+        return (StatusCode::NOT_IMPLEMENTED, "metrics require 64-bit atomic support").into_response();
+    }
 
-    let mut registry = Registry::default();
-    let stats = state.tunnel.statistics();
+    #[cfg(target_has_atomic = "64")]
+    {
+        use prometheus_client::encoding::text::encode;
+        use prometheus_client::metrics::counter::Counter;
+        use prometheus_client::metrics::family::Family;
+        use prometheus_client::metrics::gauge::Gauge;
+        use prometheus_client::registry::Registry;
+        use std::sync::atomic::{AtomicI64, AtomicU64};
+
+        let mut registry = Registry::default();
+        let stats = state.tunnel.statistics();
     let (upload_total, download_total) = stats.snapshot();
 
     // meow_traffic_bytes — counter{direction}
-    let traffic = Family::<Vec<(String, String)>, Counter<Uint, AtomicU>>::default();
+    let traffic = Family::<Vec<(String, String)>, Counter<u64, AtomicU64>>::default();
     traffic
         .get_or_create(&vec![("direction".to_string(), "upload".to_string())])
-        .inc_by(upload_total.max(0) as Uint);
+        .inc_by(upload_total.max(0) as u64);
     traffic
         .get_or_create(&vec![("direction".to_string(), "download".to_string())])
-        .inc_by(download_total.max(0) as Uint);
+        .inc_by(download_total.max(0) as u64);
     registry.register(
         "meow_traffic_bytes",
         "Cumulative bytes transferred since process start",
@@ -1714,8 +1724,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_connections_active — gauge
-    let connections_active = Gauge::<Int, AtomicI>::default();
-    connections_active.set(stats.active_connection_count() as Int);
+    let connections_active = Gauge::<i64, AtomicI64>::default();
+    connections_active.set(stats.active_connection_count() as i64);
     registry.register(
         "meow_connections_active",
         "Number of currently open connections",
@@ -1723,8 +1733,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_proxy_alive and meow_proxy_delay_ms — gauge{proxy_name,adapter_type}
-    let proxy_alive = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
-    let proxy_delay = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
+    let proxy_alive = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
+    let proxy_delay = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
     let route = state.tunnel.route_snapshot();
     for (name, proxy) in &route.proxies {
         let labels = vec![
@@ -1739,7 +1749,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
         if !proxy.delay_history().is_empty() {
             proxy_delay
                 .get_or_create(&labels)
-                .set(proxy.last_delay() as Int);
+                .set(proxy.last_delay() as i64);
         }
     }
     registry.register(
@@ -1754,14 +1764,14 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_rules_matched — counter{rule_type,action}
-    let rules_matched = Family::<Vec<(String, String)>, Counter<Uint, AtomicU>>::default();
+    let rules_matched = Family::<Vec<(String, String)>, Counter<u64, AtomicU64>>::default();
     for ((rule_type, action), count) in stats.rule_match.snapshot() {
         rules_matched
             .get_or_create(&vec![
                 ("rule_type".to_string(), rule_type.to_string()),
                 ("action".to_string(), action.to_string()),
             ])
-            .inc_by(count as Uint);
+            .inc_by(count);
     }
     registry.register(
         "meow_rules_matched",
@@ -1770,8 +1780,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_memory_rss_bytes — gauge
-    let memory_rss = Gauge::<Int, AtomicI>::default();
-    memory_rss.set(read_rss_bytes().await as Int);
+    let memory_rss = Gauge::<i64, AtomicI64>::default();
+    memory_rss.set(read_rss_bytes().await as i64);
     registry.register(
         "meow_memory_rss_bytes",
         "Current process RSS in bytes",
@@ -1779,7 +1789,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_info — gauge{version,mode} always = 1
-    let info = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
+    let info = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
     info.get_or_create(&vec![
         ("version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
         ("mode".to_string(), state.tunnel.mode().to_string()),
@@ -1787,17 +1797,18 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     .set(1);
     registry.register("meow_info", "meow-rs runtime info", info);
 
-    let mut body = String::new();
-    encode(&mut body, &registry).expect("prometheus text encoding is infallible");
-    (
-        StatusCode::OK,
-        [(
-            header::CONTENT_TYPE,
-            "text/plain; version=0.0.4; charset=utf-8",
-        )],
-        body,
-    )
-        .into_response()
+        let mut body = String::new();
+        encode(&mut body, &registry).expect("prometheus text encoding is infallible");
+        (
+            StatusCode::OK,
+            [(
+                header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            )],
+            body,
+        )
+            .into_response()
+    }
 }
 
 // ── WebSocket: log stream ────────────────────────────────────────────
