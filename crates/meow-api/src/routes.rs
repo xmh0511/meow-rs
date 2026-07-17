@@ -477,13 +477,13 @@ async fn connections_json(state: &AppState) -> String {
     let stats = state.tunnel.statistics();
     let (up, down) = stats.snapshot();
     let memory = read_rss_bytes().await;
-    #[allow(clippy::useless_conversion)]
-    let up_i64: i64 = up;
-    #[allow(clippy::useless_conversion)]
-    let down_i64: i64 = down;
+    #[allow(clippy::unnecessary_cast)]
+    let upload = up as i64;
+    #[allow(clippy::unnecessary_cast)]
+    let download = down as i64;
     serde_json::to_string(&ConnectionsResponse {
-        upload_total: up_i64,
-        download_total: down_i64,
+        upload_total: upload,
+        download_total: download,
         memory,
         connections: stats.active_connections_view(),
     })
@@ -1691,7 +1691,7 @@ async fn put_configs(
 // ── Prometheus metrics (M1.H-2) ──────────────────────────────────────
 // upstream: N/A — meow-rs enhancement; Go mihomo has no native /metrics endpoint.
 
-async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
+async fn get_metrics(State(_state): State<Arc<AppState>>) -> Response {
     // prometheus-client 0.22 requires AtomicU64/AtomicI64. On targets without
     // 64-bit atomics (e.g. MIPS32) these types don't exist in std, so we
     // return 501. cfg(target_has_atomic) is the correct gate — i686 Windows
@@ -1715,7 +1715,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
         use std::sync::atomic::{AtomicI64, AtomicU64};
 
         let mut registry = Registry::default();
-        let stats = state.tunnel.statistics();
+        let stats = _state.tunnel.statistics();
         let (upload_total, download_total) = stats.snapshot();
 
         // meow_traffic_bytes — counter{direction}
@@ -1744,7 +1744,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
         // meow_proxy_alive and meow_proxy_delay_ms — gauge{proxy_name,adapter_type}
         let proxy_alive = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
         let proxy_delay = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
-        let route = state.tunnel.route_snapshot();
+        let route = _state.tunnel.route_snapshot();
         for (name, proxy) in &route.proxies {
             let labels = vec![
                 ("proxy_name".to_string(), name.to_string()),
@@ -1801,7 +1801,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
         let info = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
         info.get_or_create(&vec![
             ("version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
-            ("mode".to_string(), state.tunnel.mode().to_string()),
+            ("mode".to_string(), _state.tunnel.mode().to_string()),
         ])
         .set(1);
         registry.register("meow_info", "meow-rs runtime info", info);
