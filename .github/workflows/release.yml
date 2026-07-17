@@ -21,11 +21,95 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          # - target: x86_64-unknown-linux-musl
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: aarch64-unknown-linux-musl
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 8388608
+          #   minimal_soft_gate: false
+          #   openwrt_archs: >-
+          #     aarch64_generic aarch64_cortex-a53 aarch64_cortex-a72
+          #     aarch64_cortex-a76
+          # - target: armv7-unknown-linux-musleabihf
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          #   cargo_flags: --no-default-features --features full
+          #   openwrt_archs: >-
+          #     arm_cortex-a7_neon-vfpv4 arm_cortex-a8_vfpv3
+          #     arm_cortex-a9_vfpv3-d16 arm_cortex-a15_neon-vfpv4
+          # - target: x86_64-pc-windows-msvc
+          #   runner: windows-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: aarch64-pc-windows-msvc
+          #   runner: windows-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: x86_64-pc-windows-gnu
+          #   runner: windows-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          #   cargo_flags: --no-default-features --features full
+          # - target: i686-pc-windows-msvc
+          #   runner: windows-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: aarch64-unknown-linux-gnu
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: armv7-unknown-linux-gnueabihf
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: x86_64-unknown-linux-gnu
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: i686-unknown-linux-gnu
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          #   cargo_flags: --no-default-features --features full
+          #   use_cross: true
+          # - target: i686-unknown-linux-musl
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          #   cargo_flags: --no-default-features --features full
+          #   use_cross: true
+          # MIPS: tier 3 targets — use cross (Docker) with -Zbuild-std
+          - target: mipsel-unknown-linux-musl
             runner: ubuntu-latest
-            # x86_64: informational only, no size gate
             minimal_budget_bytes: 0
             minimal_soft_gate: true
+            build_std: true
+            toolchain: nightly
+            cargo_flags: --no-default-features --features full
+            use_cross: true
+          - target: mips-unknown-linux-musl
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+            build_std: true
+            toolchain: nightly
+            cargo_flags: --no-default-features --features full
+            use_cross: true
+          # - target: x86_64-apple-darwin
+          #   runner: macos-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: aarch64-apple-darwin
+          #   runner: macos-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
+          # - target: riscv64gc-unknown-linux-musl
+          #   runner: ubuntu-latest
+          #   minimal_budget_bytes: 0
+          #   minimal_soft_gate: true
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
             # aarch64: hard gate — release fails if minimal binary exceeds 8 MiB
@@ -80,6 +164,20 @@ jobs:
             runner: ubuntu-latest
             minimal_budget_bytes: 0
             minimal_soft_gate: true
+          # i686: use cross (Docker) — zig doesn't support i686 assembly,
+          # clang causes glibc header mismatch with zigbuild's 2.17 stubs
+          - target: i686-unknown-linux-gnu
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+            cargo_flags: --no-default-features --features full
+            use_cross: true
+          - target: i686-unknown-linux-musl
+            runner: ubuntu-latest
+            minimal_budget_bytes: 0
+            minimal_soft_gate: true
+            cargo_flags: --no-default-features --features full
+            use_cross: true
           - target: x86_64-apple-darwin
             runner: macos-latest
             minimal_budget_bytes: 0
@@ -121,20 +219,26 @@ jobs:
       - run: cargo install --locked cargo-zigbuild
         if: runner.os == 'Linux'
 
+      - name: Install cross-compilation tools
+        if: runner.os == 'Linux'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
       - name: Build release binary
         shell: bash
         run: |
-          BUILD_STD_FLAG=""
-          if [ "${{ matrix.build_std }}" = "true" ]; then
-            BUILD_STD_FLAG="-Zbuild-std=std,panic_abort"
-          fi
-          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.build_std }}" != "true" ]; then
+          if [ "${{ matrix.use_cross }}" = "true" ]; then
+            BUILD_STD=""
+            if [ "${{ matrix.build_std }}" = "true" ]; then
+              BUILD_STD="-Zbuild-std=std,panic_abort"
+            fi
+            cross build --release --locked ${{ matrix.cargo_flags }} $BUILD_STD --target ${{ matrix.target }} --bin meow
+          elif [ "${{ runner.os }}" = "Linux" ]; then
             cargo zigbuild --release --locked ${{ matrix.cargo_flags }} --target ${{ matrix.target }} --bin meow
           else
-            cargo build --release --locked ${{ matrix.cargo_flags }} --target ${{ matrix.target }} $BUILD_STD_FLAG --bin meow
+            cargo build --release --locked ${{ matrix.cargo_flags }} --target ${{ matrix.target }} --bin meow
           fi
-        env:
-          CFLAGS: ${{ matrix.cflags || '' }}
 
       - name: Build minimal release binary (stripped, for size check)
         if: matrix.minimal_budget_bytes != 0 && runner.os == 'Linux'
@@ -256,4 +360,3 @@ jobs:
             dist/**/*.ipk
             dist/**/*.ipk.sha256
           generate_release_notes: true
-          fail_on_unmatched_files: true

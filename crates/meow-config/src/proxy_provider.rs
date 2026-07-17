@@ -1,10 +1,11 @@
 use crate::proxy_parser;
 use crate::raw::{RawHealthCheck, RawProxyProvider};
+use meow_common::atomic::AtomicU;
 use meow_common::{ProviderSlot, Proxy};
 use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
@@ -26,7 +27,7 @@ pub struct ProxyProvider {
     exclude_filter: Option<regex::Regex>,
     exclude_type: Vec<String>,
     pub health_check: Option<HealthCheckConfig>,
-    updated_at: AtomicU64,
+    updated_at: AtomicU,
     header: HashMap<String, String>,
 }
 
@@ -107,7 +108,7 @@ impl ProxyProvider {
             exclude_filter,
             exclude_type,
             health_check,
-            updated_at: AtomicU64::new(0),
+            updated_at: AtomicU::new(0),
             header,
         })
     }

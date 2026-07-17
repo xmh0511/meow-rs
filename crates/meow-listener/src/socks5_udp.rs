@@ -13,10 +13,11 @@
 //! that reads server→client datagrams and writes them back wrapped in the
 //! SOCKS5 UDP header.
 
+use meow_common::atomic::AtomicU;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -39,7 +40,7 @@ const NAT_SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 /// Per-destination outbound session within one association.
 struct Session {
     conn: Arc<dyn ProxyPacketConn>,
-    last_activity_ms: Arc<AtomicU64>,
+    last_activity_ms: Arc<AtomicU>,
     /// Reply task (server→client); aborted when the session is dropped.
     reply_task: tokio::task::AbortHandle,
 }
@@ -233,7 +234,7 @@ async fn handle_client_datagram(
 
     // Reply task: server→client. Wraps each datagram in the SOCKS5 UDP header
     // and sends it back to the client's UDP source address.
-    let last_activity_ms = Arc::new(AtomicU64::new(monotonic_ms()));
+    let last_activity_ms = Arc::new(AtomicU::new(monotonic_ms()));
     let reply_task = {
         let relay = Arc::clone(relay);
         let conn = Arc::clone(&conn);

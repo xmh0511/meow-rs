@@ -1687,25 +1687,26 @@ async fn put_configs(
 // upstream: N/A — meow-rs enhancement; Go mihomo has no native /metrics endpoint.
 
 async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
+    use meow_common::atomic::{AtomicI, AtomicU, Int, Uint};
     use prometheus_client::encoding::text::encode;
     use prometheus_client::metrics::counter::Counter;
     use prometheus_client::metrics::family::Family;
     use prometheus_client::metrics::gauge::Gauge;
     use prometheus_client::registry::Registry;
-    use std::sync::atomic::{AtomicI64, AtomicU64};
+    use std::sync::atomic::Ordering;
 
     let mut registry = Registry::default();
     let stats = state.tunnel.statistics();
     let (upload_total, download_total) = stats.snapshot();
 
     // meow_traffic_bytes — counter{direction}
-    let traffic = Family::<Vec<(String, String)>, Counter<u64, AtomicU64>>::default();
+    let traffic = Family::<Vec<(String, String)>, Counter<Uint, AtomicU>>::default();
     traffic
         .get_or_create(&vec![("direction".to_string(), "upload".to_string())])
-        .inc_by(upload_total.max(0) as u64);
+        .inc_by(upload_total.max(0) as Uint);
     traffic
         .get_or_create(&vec![("direction".to_string(), "download".to_string())])
-        .inc_by(download_total.max(0) as u64);
+        .inc_by(download_total.max(0) as Uint);
     registry.register(
         "meow_traffic_bytes",
         "Cumulative bytes transferred since process start",
@@ -1713,8 +1714,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_connections_active — gauge
-    let connections_active = Gauge::<i64, AtomicI64>::default();
-    connections_active.set(stats.active_connection_count() as i64);
+    let connections_active = Gauge::<Int, AtomicI>::default();
+    connections_active.set(stats.active_connection_count() as Int);
     registry.register(
         "meow_connections_active",
         "Number of currently open connections",
@@ -1722,8 +1723,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_proxy_alive and meow_proxy_delay_ms — gauge{proxy_name,adapter_type}
-    let proxy_alive = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
-    let proxy_delay = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
+    let proxy_alive = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
+    let proxy_delay = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
     let route = state.tunnel.route_snapshot();
     for (name, proxy) in &route.proxies {
         let labels = vec![
@@ -1738,7 +1739,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
         if !proxy.delay_history().is_empty() {
             proxy_delay
                 .get_or_create(&labels)
-                .set(proxy.last_delay() as i64);
+                .set(proxy.last_delay() as Int);
         }
     }
     registry.register(
@@ -1753,14 +1754,14 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_rules_matched — counter{rule_type,action}
-    let rules_matched = Family::<Vec<(String, String)>, Counter<u64, AtomicU64>>::default();
+    let rules_matched = Family::<Vec<(String, String)>, Counter<Uint, AtomicU>>::default();
     for ((rule_type, action), count) in stats.rule_match.snapshot() {
         rules_matched
             .get_or_create(&vec![
                 ("rule_type".to_string(), rule_type.to_string()),
                 ("action".to_string(), action.to_string()),
             ])
-            .inc_by(count);
+            .inc_by(count as Uint);
     }
     registry.register(
         "meow_rules_matched",
@@ -1769,8 +1770,8 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_memory_rss_bytes — gauge
-    let memory_rss = Gauge::<i64, AtomicI64>::default();
-    memory_rss.set(read_rss_bytes().await as i64);
+    let memory_rss = Gauge::<Int, AtomicI>::default();
+    memory_rss.set(read_rss_bytes().await as Int);
     registry.register(
         "meow_memory_rss_bytes",
         "Current process RSS in bytes",
@@ -1778,7 +1779,7 @@ async fn get_metrics(State(state): State<Arc<AppState>>) -> Response {
     );
 
     // meow_info — gauge{version,mode} always = 1
-    let info = Family::<Vec<(String, String)>, Gauge<i64, AtomicI64>>::default();
+    let info = Family::<Vec<(String, String)>, Gauge<Int, AtomicI>>::default();
     info.get_or_create(&vec![
         ("version".to_string(), env!("CARGO_PKG_VERSION").to_string()),
         ("mode".to_string(), state.tunnel.mode().to_string()),

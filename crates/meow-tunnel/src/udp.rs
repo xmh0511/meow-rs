@@ -1,9 +1,10 @@
 use crate::tunnel::TunnelInner;
 use dashmap::DashMap;
 use meow_common::adapter::ProxyAdapter;
+use meow_common::atomic::AtomicU;
 use meow_common::{Metadata, ProxyPacketConn};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
@@ -25,7 +26,7 @@ pub struct UdpSession {
     pub proxy_name: Arc<str>,
     /// Monotonic millis since process start. Bumped on every fast-path forward
     /// so idle sessions can be evicted by [`spawn_nat_sweeper`].
-    last_activity_ms: AtomicU64,
+    last_activity_ms: AtomicU,
 }
 
 impl UdpSession {
@@ -33,7 +34,7 @@ impl UdpSession {
         Self {
             conn,
             proxy_name,
-            last_activity_ms: AtomicU64::new(monotonic_ms()),
+            last_activity_ms: AtomicU::new(monotonic_ms()),
         }
     }
 
