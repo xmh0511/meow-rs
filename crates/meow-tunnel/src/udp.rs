@@ -1,9 +1,10 @@
 use crate::tunnel::TunnelInner;
 use dashmap::DashMap;
 use meow_common::adapter::ProxyAdapter;
+use meow_common::atomic::AtomicU;
 use meow_common::{Metadata, ProxyPacketConn};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
@@ -25,7 +26,7 @@ pub struct UdpSession {
     pub proxy_name: Arc<str>,
     /// Monotonic millis since process start. Bumped on every fast-path forward
     /// so idle sessions can be evicted by [`spawn_nat_sweeper`].
-    last_activity_ms: AtomicU64,
+    last_activity_ms: AtomicU,
 }
 
 impl UdpSession {
@@ -33,7 +34,7 @@ impl UdpSession {
         Self {
             conn,
             proxy_name,
-            last_activity_ms: AtomicU64::new(monotonic_ms()),
+            last_activity_ms: AtomicU::new(monotonic_ms() as meow_common::atomic::Uint),
         }
     }
 
@@ -43,17 +44,23 @@ impl UdpSession {
     /// inbound read loop) can refresh the same clock on server→app traffic —
     /// otherwise a receive-active / send-quiet session is wrongly swept.
     pub fn touch(&self) {
-        self.last_activity_ms
-            .store(monotonic_ms(), Ordering::Relaxed);
+        self.last_activity_ms.store(
+            monotonic_ms() as meow_common::atomic::Uint,
+            Ordering::Relaxed,
+        );
     }
 
     /// Time since the last [`touch`](Self::touch). `pub` so an out-of-crate
     /// reply reader can gate its own idle backstop on the same bidirectional
     /// clock the sweeper uses, instead of a one-directional wall-clock timer.
     pub fn idle_for(&self) -> Duration {
-        let now = monotonic_ms();
+        let now = monotonic_ms() as meow_common::atomic::Uint;
         let last = self.last_activity_ms.load(Ordering::Relaxed);
-        Duration::from_millis(now.saturating_sub(last))
+        #[allow(
+            clippy::useless_conversion,
+            reason = "identity on 64-bit; u32→u64 widening on mips32"
+        )]
+        Duration::from_millis(u64::from(now.wrapping_sub(last)))
     }
 }
 

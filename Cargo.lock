@@ -2375,6 +2375,7 @@ dependencies = [
  "chrono",
  "libc",
  "md5",
+ "meow-common",
  "notify",
  "once_cell",
  "rand 0.9.4",
