@@ -2410,6 +2410,7 @@ dependencies = [
  "meow-common",
  "meow-config",
  "meow-dns",
+ "meow-listener",
  "meow-proxy",
  "meow-rules",
  "meow-trie",

@@ -997,11 +997,12 @@ async fn run(
                 },
                 "tun".to_string(),
             );
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 if let Err(e) = listener.run().await {
                     error!("TUN listener error: {}", e);
                 }
             });
+            tunnel.set_tun_handle(handle);
         }
         #[cfg(not(feature = "listener-tun"))]
         warn!("tun.enable is set but this build lacks the 'listener-tun' feature");

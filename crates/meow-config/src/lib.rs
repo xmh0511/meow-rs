@@ -160,7 +160,7 @@ const TUN_MIN_MTU: u16 = 1280;
 
 /// Parse and validate the raw `tun:` block. Returns `TunConfig::default()`
 /// (disabled) when the block is absent.
-fn parse_tun_config(raw: Option<&raw::RawTun>) -> Result<TunConfig, anyhow::Error> {
+pub fn parse_tun_config(raw: Option<&raw::RawTun>) -> Result<TunConfig, anyhow::Error> {
     let Some(r) = raw else {
         return Ok(TunConfig::default());
     };

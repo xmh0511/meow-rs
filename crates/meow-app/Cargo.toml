@@ -46,7 +46,7 @@ listener-tproxy = ["meow-listener/listener-tproxy"]
 listener-mixed = ["meow-listener/listener-mixed"]
 # TUN inbound (issue #326) — transparent proxy without a tproxy/REDIRECT
 # firewall; the only transparent-proxy mode available on Windows.
-listener-tun = ["meow-listener/listener-tun"]
+listener-tun = ["meow-listener/listener-tun", "meow-api/listener-tun"]
 
 # Convenience bundles
 minimal = ["ss", "trojan", "dns-server", "listener-mixed"]

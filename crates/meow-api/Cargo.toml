@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
+[features]
+default = []
+listener-tun = ["meow-listener/listener-tun"]
+
 [dependencies]
 meow-common = { workspace = true }
 meow-tunnel = { workspace = true }
@@ -15,6 +19,7 @@ meow-dns = { workspace = true, default-features = false }
 meow-config = { workspace = true, default-features = false }
 meow-proxy = { workspace = true, default-features = false }
 meow-rules = { workspace = true }
+meow-listener = { workspace = true, default-features = false, optional = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

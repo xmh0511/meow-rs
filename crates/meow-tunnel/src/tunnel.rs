@@ -68,6 +68,9 @@ pub struct TunnelInner {
     /// PROCESS-PATH / UID). Recomputed by `Tunnel::update_rules`. Avoids an
     /// O(n) virtual-dispatch scan of the rule list on every connection.
     pub needs_process_lookup: AtomicBool,
+    /// Handle to the running TUN listener (if any). Dropping or aborting it
+    /// stops TUN. Stored so `put_configs` can start/stop TUN at runtime.
+    pub tun_handle: RwLock<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl TunnelInner {
@@ -309,6 +312,7 @@ impl Tunnel {
                 stats: Arc::new(Statistics::new()),
                 needs_ip_resolution: AtomicBool::new(false),
                 needs_process_lookup: AtomicBool::new(false),
+                tun_handle: RwLock::new(None),
             }),
         }
     }
@@ -420,6 +424,33 @@ impl Tunnel {
                 stats.sample_traffic();
             }
         });
+    }
+
+    /// Store a running TUN listener handle. If a previous TUN listener was
+    /// running, it is aborted first.
+    pub fn set_tun_handle(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut slot = self.inner.tun_handle.write();
+        if let Some(prev) = slot.take() {
+            prev.abort();
+            info!("abandoned previous TUN listener");
+        }
+        *slot = Some(handle);
+        info!("TUN listener handle stored");
+    }
+
+    /// Abort the running TUN listener, if any.
+    pub fn stop_tun(&self) {
+        let mut slot = self.inner.tun_handle.write();
+        if let Some(handle) = slot.take() {
+            handle.abort();
+            info!("TUN listener stopped");
+        }
+    }
+
+    /// Returns `true` when a TUN listener handle is currently held (the
+    /// listener may still be winding down after abort).
+    pub fn has_tun(&self) -> bool {
+        self.inner.tun_handle.read().is_some()
     }
 }
 
